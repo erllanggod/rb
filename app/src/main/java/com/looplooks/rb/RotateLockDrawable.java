@@ -1,4 +1,4 @@
-package com.adennnqt.roundbattery;
+package com.looplooks.rb;
 
 import android.graphics.Canvas;
 import android.graphics.ColorFilter;

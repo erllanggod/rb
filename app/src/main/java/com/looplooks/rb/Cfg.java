@@ -1,8 +1,8 @@
-package com.adennnqt.roundbattery;
+package com.looplooks.rb;
 
 /** Shared keys + defaults (used by both the settings app and the hook). */
 public final class Cfg {
-    public static final String PKG = "com.adennnqt.roundbattery";
+    public static final String PKG = "com.looplooks.rb";
     public static final String FILE = "settings";
 
     public static final String K_SIZE = "size_tenth_dp";      // ring diameter, 0.1 dp units

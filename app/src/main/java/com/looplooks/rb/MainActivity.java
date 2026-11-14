@@ -1,4 +1,4 @@
-package com.adennnqt.roundbattery;
+package com.looplooks.rb;
 
 import android.animation.ArgbEvaluator;
 import android.animation.ValueAnimator;

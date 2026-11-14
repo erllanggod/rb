@@ -2,6 +2,6 @@
 <resources>
     <string-array name="xposed_scope">
         <item>com.android.systemui</item>
-        <item>com.adennnqt.roundbattery</item>
+        <item>com.looplooks.rb</item>
     </string-array>
 </resources>
