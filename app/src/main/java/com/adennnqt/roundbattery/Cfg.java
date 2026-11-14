@@ -12,8 +12,8 @@ public final class Cfg {
     public static final String K_ROUND = "round_cap";         // boolean
     public static final String K_SHOWPCT = "show_percent";    // boolean
 
-    public static final int D_SIZE = 140;
-    public static final int D_STROKE = 28;
+    public static final int D_SIZE = 120;
+    public static final int D_STROKE = 24;
     public static final int D_GAP = 20;
     public static final int D_TRACK = 30;
     public static final boolean D_ROUND = true;

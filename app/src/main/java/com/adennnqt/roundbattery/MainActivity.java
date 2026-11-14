@@ -31,6 +31,7 @@ public class MainActivity extends Activity {
     public static boolean isModuleActive() { return false; }
 
     private SharedPreferences sp;
+    private boolean prefsShared = true;
     private float dens;
     private final List<RingText> rings = new ArrayList<>();
 
@@ -76,9 +77,16 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    @SuppressWarnings("deprecation")
     protected void onCreate(Bundle b) {
         super.onCreate(b);
-        sp = getSharedPreferences(Cfg.FILE, Context.MODE_PRIVATE);
+        try {
+            // LSPosed makes this file readable by System UI only when opened in this mode.
+            sp = getSharedPreferences(Cfg.FILE, Context.MODE_WORLD_READABLE);
+        } catch (SecurityException e) {
+            sp = getSharedPreferences(Cfg.FILE, Context.MODE_PRIVATE);
+            prefsShared = false;
+        }
         dens = getResources().getDisplayMetrics().density;
 
         ScrollView scroll = new ScrollView(this);
@@ -141,7 +149,7 @@ public class MainActivity extends Activity {
         title.setTypeface(Typeface.DEFAULT_BOLD);
         left.addView(title);
 
-        boolean active = isModuleActive();
+        boolean active = isModuleActive() && prefsShared;
         TextView status = text(
                 active ? "Module active in System UI"
                        : "Not active. Enable it in LSPosed for System UI and this app.",
