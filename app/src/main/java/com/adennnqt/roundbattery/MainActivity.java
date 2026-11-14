@@ -101,7 +101,12 @@ public class MainActivity extends Activity {
         buildHeader(root);
         buildPreview(root);
 
-        groupLabel(root, "Ring");
+        groupLabel(root, "Icon");
+        LinearLayout iconCard = card();
+        buildStyleRow(iconCard);
+        root.addView(iconCard);
+
+        groupLabel(root, "Size and gap");
         LinearLayout ringCard = card();
         sliderRow(ringCard, "Size", Cfg.K_SIZE, Cfg.D_SIZE, 60, 260, true, false);
         sliderRow(ringCard, "Thickness", Cfg.K_STROKE, Cfg.D_STROKE, 10, 80, true, true);
@@ -253,6 +258,44 @@ public class MainActivity extends Activity {
         return tenthsDp ? String.format(java.util.Locale.US, "%.1f dp", val / 10f) : val + "%";
     }
 
+    private TextView styleRing;
+    private TextView styleBattery;
+
+    private void buildStyleRow(LinearLayout card) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding(dp(10), dp(10), dp(10), dp(10));
+        styleRing = styleChip("Ring", 0);
+        styleBattery = styleChip("Battery", 1);
+        row.addView(styleRing, new LinearLayout.LayoutParams(0, dp(40), 1f));
+        row.addView(styleBattery, new LinearLayout.LayoutParams(0, dp(40), 1f));
+        card.addView(row);
+        TextView hint = text("Battery: height follows Size, Thickness is not used. "
+                + "Only for the style with percent outside the icon.", 12, col(R.color.text_muted));
+        hint.setPadding(dp(16), 0, dp(16), dp(12));
+        card.addView(hint);
+        refreshStyleUi();
+    }
+
+    private TextView styleChip(String label, int value) {
+        TextView t = text(label, 15, col(R.color.text_primary));
+        t.setGravity(Gravity.CENTER);
+        t.setOnClickListener(v -> {
+            sp.edit().putInt(Cfg.K_STYLE, value).apply();
+            refreshStyleUi();
+            refresh();
+        });
+        return t;
+    }
+
+    private void refreshStyleUi() {
+        int cur = sp.getInt(Cfg.K_STYLE, Cfg.D_STYLE);
+        styleRing.setBackground(cur == 0 ? round(col(R.color.accent), 20) : round(0x00000000, 20));
+        styleRing.setTextColor(cur == 0 ? 0xFFFFFFFF : col(R.color.text_secondary));
+        styleBattery.setBackground(cur == 1 ? round(col(R.color.accent), 20) : round(0x00000000, 20));
+        styleBattery.setTextColor(cur == 1 ? 0xFFFFFFFF : col(R.color.text_secondary));
+    }
+
     private final List<Object[]> switches = new ArrayList<>();
 
     private void switchRow(LinearLayout card, String label, String key, boolean def) {
@@ -279,7 +322,9 @@ public class MainActivity extends Activity {
         SharedPreferences.Editor e = sp.edit();
         for (Object[] s : sliders) e.putInt((String) s[2], (Integer) s[3]);
         for (Object[] s : switches) e.putBoolean((String) s[1], (Boolean) s[2]);
+        e.putInt(Cfg.K_STYLE, Cfg.D_STYLE);
         e.apply();
+        refreshStyleUi();
         for (Object[] s : sliders) {
             SeekBar sb = (SeekBar) s[0];
             int def = (Integer) s[3], min = (Integer) s[4];
@@ -331,11 +376,14 @@ public class MainActivity extends Activity {
         private float gap() { return sp.getInt(Cfg.K_GAP, Cfg.D_GAP) / 10f * dens * k; }
         private boolean showPct() { return true; }
 
+        private boolean battery() { return sp.getInt(Cfg.K_STYLE, Cfg.D_STYLE) == 1; }
+        private float iconW() { return battery() ? size() * Cfg.BAT_H * Cfg.BAT_W : size(); }
+
         @Override
         protected void onMeasure(int wSpec, int hSpec) {
             txt.setTextSize(textSp * dens);
             float tw = showPct() ? txt.measureText(pct + "%") : 0f;
-            float w = size() + (showPct() ? gap() + tw : 0f);
+            float w = iconW() + (showPct() ? gap() + tw : 0f);
             Paint.FontMetrics fm = txt.getFontMetrics();
             float h = Math.max(size(), fm.descent - fm.ascent);
             setMeasuredDimension((int) Math.ceil(w) + 1, (int) Math.ceil(h) + 1);
@@ -344,29 +392,67 @@ public class MainActivity extends Activity {
         @Override
         protected void onDraw(Canvas c) {
             int color = col(colorRes);
-            float size = size(), sw = stroke();
+            float size = size();
             float cy = getHeight() / 2f;
-            float r = (size - sw) / 2f;
-            box.set(sw / 2f, cy - r, sw / 2f + 2 * r, cy + r);
 
-            track.setStyle(Paint.Style.STROKE);
-            track.setStrokeWidth(sw);
-            track.setColor(color);
-            track.setAlpha(Math.round(255f * sp.getInt(Cfg.K_TRACK, Cfg.D_TRACK) / 100f));
+            if (battery()) {
+                float h = size * Cfg.BAT_H, w = h * Cfg.BAT_W;
+                float capH = h * 0.09f, capW = w * 0.34f, bodyH = h - capH, radius = w * 0.16f;
+                float top = cy - h / 2f;
+                int trackA = Math.round(255f * sp.getInt(Cfg.K_TRACK, Cfg.D_TRACK) / 100f);
+                arc.setStyle(Paint.Style.FILL);
+                arc.setColor(color);
+                arc.setAlpha(pct >= 98 ? 255 : trackA);
+                box.set((w - capW) / 2f, top, (w + capW) / 2f, top + capH);
+                c.drawRoundRect(box, capW * 0.2f, capW * 0.2f, arc);
+                box.set(0, top + capH, w, top + h);
+                arc.setAlpha(trackA);
+                c.drawRoundRect(box, radius, radius, arc);
+                arc.setAlpha(255);
+                c.save();
+                android.graphics.Path clip = new android.graphics.Path();
+                clip.addRoundRect(box, radius, radius, android.graphics.Path.Direction.CW);
+                c.clipPath(clip);
+                float fillH = bodyH * pct / 100f;
+                c.drawRect(0, top + h - fillH, w, top + h, arc);
+                c.restore();
+                if (colorRes == R.color.success) {
+                    float bw = w * 0.80f, bh = bodyH * 0.64f;
+                    float bx = (w - bw) / 2f, by = top + capH + (bodyH - bh) / 2f;
+                    float[] pts = {0.60f, 0f, 0.10f, 0.56f, 0.46f, 0.56f, 0.36f, 1f, 0.92f, 0.38f, 0.54f, 0.38f};
+                    android.graphics.Path bolt = new android.graphics.Path();
+                    for (int i = 0; i < pts.length; i += 2) {
+                        float px = bx + pts[i] * bw, py = by + pts[i + 1] * bh;
+                        if (i == 0) bolt.moveTo(px, py); else bolt.lineTo(px, py);
+                    }
+                    bolt.close();
+                    arc.setColor(0xFFFFFFFF);
+                    c.drawPath(bolt, arc);
+                }
+            } else {
+                float sw = stroke();
+                float r = (size - sw) / 2f;
+                box.set(sw / 2f, cy - r, sw / 2f + 2 * r, cy + r);
 
-            arc.setStyle(Paint.Style.STROKE);
-            arc.setStrokeWidth(sw);
-            arc.setColor(color);
-            arc.setStrokeCap(Paint.Cap.ROUND);
+                track.setStyle(Paint.Style.STROKE);
+                track.setStrokeWidth(sw);
+                track.setColor(color);
+                track.setAlpha(Math.round(255f * sp.getInt(Cfg.K_TRACK, Cfg.D_TRACK) / 100f));
 
-            c.drawArc(box, 0, 360, false, track);
-            c.drawArc(box, -90, 360f * pct / 100f, false, arc);
+                arc.setStyle(Paint.Style.STROKE);
+                arc.setStrokeWidth(sw);
+                arc.setColor(color);
+                arc.setStrokeCap(Paint.Cap.ROUND);
+
+                c.drawArc(box, 0, 360, false, track);
+                c.drawArc(box, -90, 360f * pct / 100f, false, arc);
+            }
 
             if (showPct()) {
                 txt.setTextSize(textSp * dens);
                 txt.setColor(color);
                 Paint.FontMetrics fm = txt.getFontMetrics();
-                c.drawText(pct + "%", size + gap(), cy - (fm.ascent + fm.descent) / 2f, txt);
+                c.drawText(pct + "%", iconW() + gap(), cy - (fm.ascent + fm.descent) / 2f, txt);
             }
         }
     }
