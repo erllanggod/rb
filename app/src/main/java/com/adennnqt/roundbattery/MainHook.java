@@ -230,7 +230,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 boolean locked = Settings.System.getInt(ctx.getContentResolver(),
                         Settings.System.ACCELEROMETER_ROTATION, 1) == 0;
                 if (rotateIcon && locked) {
-                    int size = Math.round(tv.getTextSize());
+                    int size = Math.round(tv.getTextSize() * 1.1f);
                     icon.setBounds(0, 0, size, size);
                     tv.setCompoundDrawablesRelative(null, null, icon, null);
                     tv.setCompoundDrawablePadding(Math.round(dp(tv, 4f)));
