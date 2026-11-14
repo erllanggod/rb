@@ -18,6 +18,7 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -107,6 +108,11 @@ public class MainActivity extends Activity {
         sliderRow(ringCard, "Gap to percent", Cfg.K_GAP, Cfg.D_GAP, 0, 100, true, true);
         sliderRow(ringCard, "Track opacity", Cfg.K_TRACK, Cfg.D_TRACK, 0, 100, false, true);
         root.addView(ringCard);
+
+        groupLabel(root, "Control center");
+        LinearLayout ccCard = card();
+        switchRow(ccCard, "Rotation lock icon next to date", Cfg.K_ROTATE, Cfg.D_ROTATE);
+        root.addView(ccCard);
 
         Button apply = new Button(this);
         apply.setText("Apply and restart System UI");
@@ -247,9 +253,32 @@ public class MainActivity extends Activity {
         return tenthsDp ? String.format(java.util.Locale.US, "%.1f dp", val / 10f) : val + "%";
     }
 
+    private final List<Object[]> switches = new ArrayList<>();
+
+    private void switchRow(LinearLayout card, String label, String key, boolean def) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(16), dp(12), dp(16), dp(12));
+        row.addView(text(label, 15, col(R.color.text_primary)),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        Switch sw = new Switch(this);
+        sw.setChecked(sp.getBoolean(key, def));
+        int[][] states = {{android.R.attr.state_checked}, {}};
+        sw.setTrackTintList(new ColorStateList(states,
+                new int[]{col(R.color.accent), col(R.color.divider)}));
+        sw.setThumbTintList(ColorStateList.valueOf(0xFFFFFFFF));
+        sw.setOnCheckedChangeListener((v, on) -> sp.edit().putBoolean(key, on).apply());
+        row.addView(sw);
+        card.addView(row);
+        switches.add(new Object[]{sw, key, def});
+    }
+
     private void resetAll() {
         SharedPreferences.Editor e = sp.edit();
         for (Object[] s : sliders) e.putInt((String) s[2], (Integer) s[3]);
+        for (Object[] s : switches) e.putBoolean((String) s[1], (Boolean) s[2]);
         e.apply();
         for (Object[] s : sliders) {
             SeekBar sb = (SeekBar) s[0];
@@ -257,6 +286,7 @@ public class MainActivity extends Activity {
             sb.setProgress(def - min);
             ((TextView) s[1]).setText(fmt(def, (Boolean) s[5]));
         }
+        for (Object[] s : switches) ((Switch) s[0]).setChecked((Boolean) s[2]);
         refresh();
     }
 

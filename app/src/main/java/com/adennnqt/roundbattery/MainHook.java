@@ -1,12 +1,19 @@
 package com.adennnqt.roundbattery;
 
+import android.content.Context;
+import android.database.ContentObserver;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.RectF;
 import android.graphics.Typeface;
+import android.os.Handler;
+import android.os.Looper;
+import android.provider.Settings;
 import android.view.View;
+import android.widget.TextView;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
+import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XC_MethodReplacement;
 import de.robv.android.xposed.XSharedPreferences;
 import de.robv.android.xposed.XposedBridge;
@@ -22,6 +29,7 @@ public class MainHook implements IXposedHookLoadPackage {
 
     private static final String ICON_VIEW = "com.android.systemui.statusbar.views.MiuiBatteryMeterIconView";
     private static final String HOLLOW_VIEW = "com.android.systemui.statusbar.views.MiuiHollowBatteryMeterIconView";
+    private static final String DATE_VIEW = "com.android.systemui.controlcenter.phone.widget.ControlCenterDateView";
     private static final String METER_VIEW = "com.android.systemui.statusbar.views.MiuiBatteryMeterView";
 
     private static XSharedPreferences prefs;
@@ -29,6 +37,7 @@ public class MainHook implements IXposedHookLoadPackage {
     private static float strokeDp = Cfg.D_STROKE / 10f;
     private static float gapDp = Cfg.D_GAP / 10f;
     private static int trackAlpha = Cfg.D_TRACK;
+    private static boolean rotateIcon = Cfg.D_ROTATE;
     private static boolean warned = false;
 
     private static void loadPrefs() {
@@ -50,6 +59,7 @@ public class MainHook implements IXposedHookLoadPackage {
             strokeDp = prefs.getInt(Cfg.K_STROKE, Cfg.D_STROKE) / 10f;
             gapDp = prefs.getInt(Cfg.K_GAP, Cfg.D_GAP) / 10f;
             trackAlpha = prefs.getInt(Cfg.K_TRACK, Cfg.D_TRACK);
+            rotateIcon = prefs.getBoolean(Cfg.K_ROTATE, Cfg.D_ROTATE);
         } catch (Throwable t) {
             XposedBridge.log("RoundBattery: loadPrefs failed: " + t);
         }
@@ -77,6 +87,11 @@ public class MainHook implements IXposedHookLoadPackage {
             hookIcon(XposedHelpers.findClass(HOLLOW_VIEW, lpparam.classLoader), true);
         } catch (Throwable t) {
             XposedBridge.log("RoundBattery: hollow view hook failed: " + t);
+        }
+        try {
+            hookDateView(lpparam.classLoader);
+        } catch (Throwable t) {
+            XposedBridge.log("RoundBattery: date view hook failed: " + t);
         }
     }
 
@@ -183,5 +198,71 @@ public class MainHook implements IXposedHookLoadPackage {
                     : XposedHelpers.getIntField(v, "mLightColor");
         }
         return intensity > 0.5f ? 0xFF1A1A1A : 0xFFFFFFFF;
+    }
+
+    /** Rotation-lock icon right after the date in the control center header (shown only while rotation is locked). */
+    private void hookDateView(ClassLoader cl) {
+        Class<?> date = XposedHelpers.findClass(DATE_VIEW, cl);
+        XposedHelpers.findAndHookMethod(date, "onFinishInflate", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) {
+                try {
+                    attachRotateIcon((TextView) p.thisObject);
+                } catch (Throwable t) {
+                    XposedBridge.log("RoundBattery: attachRotateIcon failed: " + t);
+                }
+            }
+        });
+    }
+
+    private static void attachRotateIcon(final TextView tv) {
+        final Context ctx = tv.getContext();
+        final RotateLockDrawable icon = new RotateLockDrawable(tv);
+
+        final Runnable update = new Runnable() {
+            @Override
+            public void run() {
+                loadPrefs();
+                boolean locked = Settings.System.getInt(ctx.getContentResolver(),
+                        Settings.System.ACCELEROMETER_ROTATION, 1) == 0;
+                if (rotateIcon && locked) {
+                    int size = Math.round(tv.getTextSize() * 1.1f);
+                    icon.setBounds(0, 0, size, size);
+                    tv.setCompoundDrawablesRelative(null, null, icon, null);
+                    tv.setCompoundDrawablePadding(Math.round(dp(tv, 4f)));
+                } else {
+                    tv.setCompoundDrawablesRelative(null, null, null, null);
+                }
+            }
+        };
+
+        final ContentObserver observer = new ContentObserver(new Handler(Looper.getMainLooper())) {
+            @Override
+            public void onChange(boolean selfChange) {
+                update.run();
+            }
+        };
+
+        final Runnable register = new Runnable() {
+            @Override
+            public void run() {
+                ctx.getContentResolver().registerContentObserver(
+                        Settings.System.getUriFor(Settings.System.ACCELEROMETER_ROTATION), false, observer);
+                update.run();
+            }
+        };
+
+        tv.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            @Override
+            public void onViewAttachedToWindow(View v) {
+                register.run();
+            }
+
+            @Override
+            public void onViewDetachedFromWindow(View v) {
+                ctx.getContentResolver().unregisterContentObserver(observer);
+            }
+        });
+        if (tv.isAttachedToWindow()) register.run();
     }
 }
