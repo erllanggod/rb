@@ -40,7 +40,6 @@ public class MainHook implements IXposedHookLoadPackage {
     private static int trackAlpha = Cfg.D_TRACK;
     private static boolean rotateIcon = Cfg.D_ROTATE;
     private static boolean roundEnds = Cfg.D_ROUND;
-    private static int iconStyle = Cfg.D_STYLE;
     private static boolean warned = false;
 
     private static void loadPrefs() {
@@ -64,7 +63,6 @@ public class MainHook implements IXposedHookLoadPackage {
             trackAlpha = prefs.getInt(Cfg.K_TRACK, Cfg.D_TRACK);
             rotateIcon = prefs.getBoolean(Cfg.K_ROTATE, Cfg.D_ROTATE);
             roundEnds = prefs.getBoolean(Cfg.K_ROUND, Cfg.D_ROUND);
-            iconStyle = prefs.getInt(Cfg.K_STYLE, Cfg.D_STYLE);
         } catch (Throwable t) {
             XposedBridge.log("RoundBattery: loadPrefs failed: " + t);
         }
@@ -120,7 +118,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 // Hollow (percent inside the ring): ring + 1dp each side, no gap.
                 int w = hollow
                         ? Math.round(dp(v, sizeDp + 2f))
-                        : Math.round(dp(v, 1f + (iconStyle == 1 ? sizeDp * Cfg.BAT_H * Cfg.BAT_W : sizeDp) + gapDp));
+                        : Math.round(dp(v, 1f + sizeDp + gapDp));
                 int h = View.MeasureSpec.getSize((Integer) p.args[1]);
                 XposedHelpers.callMethod(v, "setMeasuredDimension", w, h);
                 return null;
@@ -140,12 +138,6 @@ public class MainHook implements IXposedHookLoadPackage {
                     Canvas c = (Canvas) p.args[0];
                     int level = XposedHelpers.getIntField(v, f(hollow, "Level"));
                     int color = pickColor(v, hollow);
-
-                    if (!hollow && iconStyle == 1) {
-                        drawBattery(v, c, level, color,
-                                XposedHelpers.getBooleanField(v, f(hollow, "Charging")));
-                        return null;
-                    }
 
                     float d = dp(v, sizeDp);
                     float sw = dp(v, strokeDp);
@@ -190,64 +182,6 @@ public class MainHook implements IXposedHookLoadPackage {
         });
     }
 
-
-    private static final Paint BAT = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private static final RectF BAT_R = new RectF();
-    private static final Path BAT_CLIP = new Path();
-    private static final Path BOLT = new Path();
-    private static final float[] BOLT_PTS = {0.60f, 0f, 0.10f, 0.56f, 0.46f, 0.56f, 0.36f, 1f, 0.92f, 0.38f, 0.54f, 0.38f};
-
-    /**
-     * Vertical battery, ColorOS style: empty part (track color) on top, fill rising from the bottom,
-     * cap follows the empty tone, white bolt while charging.
-     */
-    private static void drawBattery(View v, Canvas c, int level, int color, boolean charging) {
-        float h = dp(v, sizeDp) * Cfg.BAT_H;
-        float w = h * Cfg.BAT_W;
-        float capH = h * 0.09f;
-        float capW = w * 0.34f;
-        float bodyH = h - capH;
-        float radius = w * 0.16f;
-        float left = dp(v, 1f);
-        float top = (v.getHeight() - h) / 2f;
-        int trackA = Math.round(255f * trackAlpha / 100f);
-
-        BAT.setStyle(Paint.Style.FILL);
-        BAT.setColor(color);
-
-        BAT.setAlpha(level >= 98 ? 255 : trackA);
-        BAT_R.set(left + (w - capW) / 2f, top, left + (w + capW) / 2f, top + capH);
-        c.drawRoundRect(BAT_R, capW * 0.2f, capW * 0.2f, BAT);
-
-        BAT_R.set(left, top + capH, left + w, top + h);
-        BAT.setAlpha(trackA);
-        c.drawRoundRect(BAT_R, radius, radius, BAT);
-
-        BAT.setAlpha(255);
-        c.save();
-        BAT_CLIP.reset();
-        BAT_CLIP.addRoundRect(BAT_R, radius, radius, Path.Direction.CW);
-        c.clipPath(BAT_CLIP);
-        float fillH = bodyH * Math.max(0, Math.min(100, level)) / 100f;
-        c.drawRect(left, top + h - fillH, left + w, top + h, BAT);
-        c.restore();
-
-        if (charging) {
-            float bw = w * 0.80f;
-            float bh = bodyH * 0.64f;
-            float bx = left + (w - bw) / 2f;
-            float by = top + capH + (bodyH - bh) / 2f;
-            BOLT.reset();
-            for (int i = 0; i < BOLT_PTS.length; i += 2) {
-                float px = bx + BOLT_PTS[i] * bw;
-                float py = by + BOLT_PTS[i + 1] * bh;
-                if (i == 0) BOLT.moveTo(px, py); else BOLT.lineTo(px, py);
-            }
-            BOLT.close();
-            BAT.setColor(0xFFFFFFFF);
-            c.drawPath(BOLT, BAT);
-        }
-    }
 
     /** Same state -> color order as the stock icon: charging, power save, performance, low, tint. */
     private static int pickColor(View v, boolean hollow) {
@@ -296,7 +230,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 boolean locked = Settings.System.getInt(ctx.getContentResolver(),
                         Settings.System.ACCELEROMETER_ROTATION, 1) == 0;
                 if (rotateIcon && locked) {
-                    int size = Math.round(tv.getTextSize() * 1.1f);
+                    int size = Math.round(tv.getTextSize());
                     icon.setBounds(0, 0, size, size);
                     tv.setCompoundDrawablesRelative(null, null, icon, null);
                     tv.setCompoundDrawablePadding(Math.round(dp(tv, 4f)));

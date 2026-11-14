@@ -7,7 +7,6 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Canvas;
 import android.graphics.Paint;
-import android.graphics.Path;
 import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
@@ -36,7 +35,6 @@ public class MainActivity extends Activity {
     private SharedPreferences sp;
     private boolean prefsShared = true;
     private float dens;
-    private final List<RingText> rings = new ArrayList<>();
     private final List<Object[]> sliders = new ArrayList<>();   // {SeekBar, TextView, key, def, min, tenths}
     private final List<Object[]> switches = new ArrayList<>();  // {M3Switch, defaultChecked}
 
@@ -118,7 +116,6 @@ public class MainActivity extends Activity {
         top.setOrientation(LinearLayout.VERTICAL);
         top.setPadding(dp(14), dp(20), dp(14), dp(4));
         buildHeader(top);
-        buildPreview(top);
         page.addView(top, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -133,11 +130,6 @@ public class MainActivity extends Activity {
         page.addView(scroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        groupLabel(root, "States");
-        LinearLayout statesCard = card();
-        buildStates(statesCard);
-        root.addView(statesCard);
-
         groupLabel(root, "Size and gap");
         LinearLayout ringCard = card();
         sliderRow(ringCard, "Size", Cfg.K_SIZE, Cfg.D_SIZE, 60, 260, true, false);
@@ -148,12 +140,8 @@ public class MainActivity extends Activity {
 
         groupLabel(root, "Options");
         LinearLayout optCard = card();
-        optionRow(optCard, R.drawable.ic_opt_battery, "Battery icon",
-                "Vertical battery instead of ring. Height follows Size",
-                sp.getInt(Cfg.K_STYLE, Cfg.D_STYLE) == 1, Cfg.D_STYLE == 1, false,
-                on -> sp.edit().putInt(Cfg.K_STYLE, on ? 1 : 0).apply());
         optionRow(optCard, R.drawable.ic_opt_round, "Round line ends", "Softer ring edges",
-                sp.getBoolean(Cfg.K_ROUND, Cfg.D_ROUND), Cfg.D_ROUND, true,
+                sp.getBoolean(Cfg.K_ROUND, Cfg.D_ROUND), Cfg.D_ROUND, false,
                 on -> sp.edit().putBoolean(Cfg.K_ROUND, on).apply());
         optionRow(optCard, R.drawable.ic_opt_lock, "Rotation lock icon",
                 "Next to the date in control center",
@@ -164,21 +152,12 @@ public class MainActivity extends Activity {
         TextView apply = text("Apply and restart System UI", 15, col(R.color.on_accent));
         apply.setTypeface(Typeface.DEFAULT_BOLD);
         apply.setGravity(Gravity.CENTER);
-        apply.setCompoundDrawablePadding(dp(8));
-        Drawable chk = icon(R.drawable.ic_check, col(R.color.on_accent));
-        chk.setBounds(0, 0, dp(20), dp(20));
-        apply.setCompoundDrawables(chk, null, null, null);
         apply.setBackground(round(col(R.color.accent), 26));
         apply.setOnClickListener(v -> restartSystemUi());
         LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
         alp.topMargin = dp(4);
         root.addView(apply, alp);
-
-        TextView hint = text("Needs LSPosed and root", 11, col(R.color.text_muted));
-        hint.setGravity(Gravity.CENTER);
-        hint.setPadding(0, dp(8), 0, 0);
-        root.addView(hint);
 
         setContentView(page);
     }
@@ -234,48 +213,6 @@ public class MainActivity extends Activity {
         parent.addView(row);
     }
 
-    private void buildPreview(LinearLayout parent) {
-        LinearLayout hero = card();
-        hero.setPadding(dp(14), dp(14), dp(14), dp(14));
-
-        LinearLayout strip = new LinearLayout(this);
-        strip.setOrientation(LinearLayout.HORIZONTAL);
-        strip.setGravity(Gravity.CENTER_VERTICAL);
-        strip.setPadding(dp(14), dp(16), dp(14), dp(16));
-        strip.setBackground(round(col(R.color.strip), 16));
-        strip.addView(text("04:49", 15, col(R.color.text_primary)),
-                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        strip.addView(new RingText(this, 71, R.color.text_primary, 1.7f, 15));
-        hero.addView(strip);
-
-        parent.addView(hero);
-    }
-
-    private void buildStates(LinearLayout card) {
-        LinearLayout tiles = new LinearLayout(this);
-        tiles.setOrientation(LinearLayout.HORIZONTAL);
-        tiles.setPadding(dp(14), dp(14), dp(14), dp(14));
-        addTile(tiles, 71, R.color.text_primary, "Normal", false);
-        addTile(tiles, 45, R.color.success, "Charging", true);
-        addTile(tiles, 12, R.color.danger, "Low", true);
-        card.addView(tiles);
-    }
-
-    private void addTile(LinearLayout tiles, int pct, int colorRes, String label, boolean margin) {
-        LinearLayout t = new LinearLayout(this);
-        t.setOrientation(LinearLayout.VERTICAL);
-        t.setGravity(Gravity.CENTER);
-        t.setPadding(dp(4), dp(12), dp(4), dp(10));
-        t.setBackground(round(col(R.color.strip), 16));
-        t.addView(new RingText(this, pct, colorRes, 1.2f, 12));
-        TextView l = text(label, 11, col(R.color.text_secondary));
-        l.setPadding(0, dp(6), 0, 0);
-        t.addView(l);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        if (margin) lp.setMarginStart(dp(8));
-        tiles.addView(t, lp);
-    }
-
     private void sliderRow(LinearLayout card, String label, String key, int def,
                            int min, int max, boolean tenthsDp, boolean dividerAbove) {
         if (dividerAbove) divider(card);
@@ -306,7 +243,6 @@ public class MainActivity extends Activity {
                 int val = p + min;
                 value.setText(fmt(val, tenthsDp));
                 sp.edit().putInt(key, val).apply();
-                refresh();
             }
             @Override public void onStartTrackingTouch(SeekBar s) {}
             @Override public void onStopTrackingTouch(SeekBar s) {}
@@ -346,7 +282,7 @@ public class MainActivity extends Activity {
         row.addView(tx, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         M3Switch sw = new M3Switch(this, checked);
-        sw.listener = on -> { l.on(on); refresh(); };
+        sw.listener = l;
         sw.setContentDescription(title);
         row.addView(sw, new LinearLayout.LayoutParams(dp(52), dp(32)));
         row.setOnClickListener(v -> sw.performClick());
@@ -363,14 +299,6 @@ public class MainActivity extends Activity {
         }
         // Switches write their own prefs through the listener.
         for (Object[] s : switches) ((M3Switch) s[0]).setChecked((Boolean) s[1], true);
-        refresh();
-    }
-
-    private void refresh() {
-        for (RingText r : rings) {
-            r.requestLayout();
-            r.invalidate();
-        }
     }
 
     private void restartSystemUi() {
@@ -429,112 +357,6 @@ public class MainActivity extends Activity {
             info.setClassName("android.widget.Switch");
             info.setCheckable(true);
             info.setChecked(checked);
-        }
-    }
-
-    /** Ring + percent text drawn with the same rules as the hook. */
-    private class RingText extends View {
-        private final int pct;
-        private final int colorRes;
-        private final float k;
-        private final float textSp;
-        private final Paint track = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint arc = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint txt = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final RectF box = new RectF();
-
-        RingText(Context c, int pct, int colorRes, float k, float textSp) {
-            super(c);
-            this.pct = pct;
-            this.colorRes = colorRes;
-            this.k = k;
-            this.textSp = textSp;
-            rings.add(this);
-        }
-
-        private float size() { return sp.getInt(Cfg.K_SIZE, Cfg.D_SIZE) / 10f * dens * k; }
-        private float stroke() { return sp.getInt(Cfg.K_STROKE, Cfg.D_STROKE) / 10f * dens * k; }
-        private float gap() { return sp.getInt(Cfg.K_GAP, Cfg.D_GAP) / 10f * dens * k; }
-        private boolean showPct() { return true; }
-
-        private boolean battery() { return sp.getInt(Cfg.K_STYLE, Cfg.D_STYLE) == 1; }
-        private float iconW() { return battery() ? size() * Cfg.BAT_H * Cfg.BAT_W : size(); }
-
-        @Override
-        protected void onMeasure(int wSpec, int hSpec) {
-            txt.setTextSize(textSp * dens);
-            float tw = showPct() ? txt.measureText(pct + "%") : 0f;
-            float w = iconW() + (showPct() ? gap() + tw : 0f);
-            Paint.FontMetrics fm = txt.getFontMetrics();
-            float h = Math.max(size(), fm.descent - fm.ascent);
-            setMeasuredDimension((int) Math.ceil(w) + 1, (int) Math.ceil(h) + 1);
-        }
-
-        @Override
-        protected void onDraw(Canvas c) {
-            int color = col(colorRes);
-            float size = size();
-            float cy = getHeight() / 2f;
-
-            if (battery()) {
-                float h = size * Cfg.BAT_H, w = h * Cfg.BAT_W;
-                float capH = h * 0.09f, capW = w * 0.34f, bodyH = h - capH, radius = w * 0.16f;
-                float top = cy - h / 2f;
-                int trackA = Math.round(255f * sp.getInt(Cfg.K_TRACK, Cfg.D_TRACK) / 100f);
-                arc.setStyle(Paint.Style.FILL);
-                arc.setColor(color);
-                arc.setAlpha(pct >= 98 ? 255 : trackA);
-                box.set((w - capW) / 2f, top, (w + capW) / 2f, top + capH);
-                c.drawRoundRect(box, capW * 0.2f, capW * 0.2f, arc);
-                box.set(0, top + capH, w, top + h);
-                arc.setAlpha(trackA);
-                c.drawRoundRect(box, radius, radius, arc);
-                arc.setAlpha(255);
-                c.save();
-                Path clip = new Path();
-                clip.addRoundRect(box, radius, radius, Path.Direction.CW);
-                c.clipPath(clip);
-                float fillH = bodyH * pct / 100f;
-                c.drawRect(0, top + h - fillH, w, top + h, arc);
-                c.restore();
-                if (colorRes == R.color.success) {
-                    float bw = w * 0.80f, bh = bodyH * 0.64f;
-                    float bx = (w - bw) / 2f, by = top + capH + (bodyH - bh) / 2f;
-                    float[] pts = {0.60f, 0f, 0.10f, 0.56f, 0.46f, 0.56f, 0.36f, 1f, 0.92f, 0.38f, 0.54f, 0.38f};
-                    Path bolt = new Path();
-                    for (int i = 0; i < pts.length; i += 2) {
-                        float px = bx + pts[i] * bw, py = by + pts[i + 1] * bh;
-                        if (i == 0) bolt.moveTo(px, py); else bolt.lineTo(px, py);
-                    }
-                    bolt.close();
-                    arc.setColor(0xFFFFFFFF);
-                    c.drawPath(bolt, arc);
-                }
-            } else {
-                float sw = stroke();
-                float r = (size - sw) / 2f;
-                box.set(sw / 2f, cy - r, sw / 2f + 2 * r, cy + r);
-
-                track.setStyle(Paint.Style.STROKE);
-                track.setStrokeWidth(sw);
-                track.setColor(color);
-                track.setAlpha(Math.round(255f * sp.getInt(Cfg.K_TRACK, Cfg.D_TRACK) / 100f));
-
-                arc.setStyle(Paint.Style.STROKE);
-                arc.setStrokeWidth(sw);
-                arc.setColor(color);
-                arc.setStrokeCap(sp.getBoolean(Cfg.K_ROUND, Cfg.D_ROUND) ? Paint.Cap.ROUND : Paint.Cap.BUTT);
-
-                c.drawArc(box, 0, 360, false, track);
-                c.drawArc(box, -90, 360f * pct / 100f, false, arc);
-            }
-
-            if (showPct()) {
-                txt.setTextSize(textSp * dens);
-                txt.setColor(color);
-                Paint.FontMetrics fm = txt.getFontMetrics();
-                c.drawText(pct + "%", iconW() + gap(), cy - (fm.ascent + fm.descent) / 2f, txt);
-            }
         }
     }
 }
