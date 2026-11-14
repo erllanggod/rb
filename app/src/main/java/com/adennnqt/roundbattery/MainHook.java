@@ -5,11 +5,8 @@ import android.graphics.Paint;
 import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.view.View;
-import android.view.ViewGroup;
-import android.widget.LinearLayout;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
-import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XC_MethodReplacement;
 import de.robv.android.xposed.XSharedPreferences;
 import de.robv.android.xposed.XposedBridge;
@@ -20,7 +17,6 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  * Hooks HyperOS SystemUI (checked against MiuiSystemUI 17.03.260226.r):
  *  - MiuiBatteryMeterIconView        (percent outside the icon)  -> ring
  *  - MiuiHollowBatteryMeterIconView  (percent inside the icon)   -> ring with number inside
- *  - MiuiBatteryMeterView            -> gap between ring and percent text
  */
 public class MainHook implements IXposedHookLoadPackage {
 
@@ -33,8 +29,6 @@ public class MainHook implements IXposedHookLoadPackage {
     private static float strokeDp = Cfg.D_STROKE / 10f;
     private static float gapDp = Cfg.D_GAP / 10f;
     private static int trackAlpha = Cfg.D_TRACK;
-    private static boolean roundCap = Cfg.D_ROUND;
-    private static boolean showPercent = Cfg.D_SHOWPCT;
     private static boolean warned = false;
 
     private static void loadPrefs() {
@@ -56,8 +50,6 @@ public class MainHook implements IXposedHookLoadPackage {
             strokeDp = prefs.getInt(Cfg.K_STROKE, Cfg.D_STROKE) / 10f;
             gapDp = prefs.getInt(Cfg.K_GAP, Cfg.D_GAP) / 10f;
             trackAlpha = prefs.getInt(Cfg.K_TRACK, Cfg.D_TRACK);
-            roundCap = prefs.getBoolean(Cfg.K_ROUND, Cfg.D_ROUND);
-            showPercent = prefs.getBoolean(Cfg.K_SHOWPCT, Cfg.D_SHOWPCT);
         } catch (Throwable t) {
             XposedBridge.log("RoundBattery: loadPrefs failed: " + t);
         }
@@ -86,11 +78,6 @@ public class MainHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log("RoundBattery: hollow view hook failed: " + t);
         }
-        try {
-            hookMeterView(lpparam.classLoader);
-        } catch (Throwable t) {
-            XposedBridge.log("RoundBattery: meter view hook failed: " + t);
-        }
     }
 
     private static float dp(View v, float value) {
@@ -109,7 +96,11 @@ public class MainHook implements IXposedHookLoadPackage {
             protected Object replaceHookedMethod(MethodHookParam p) {
                 loadPrefs();
                 View v = (View) p.thisObject;
-                int w = Math.round(dp(v, sizeDp + 2f));
+                // Non-hollow: 1dp left pad + ring + gap on the right (this is the gap to the percent text).
+                // Hollow (percent inside the ring): ring + 1dp each side, no gap.
+                int w = hollow
+                        ? Math.round(dp(v, sizeDp + 2f))
+                        : Math.round(dp(v, 1f + sizeDp + gapDp));
                 int h = View.MeasureSpec.getSize((Integer) p.args[1]);
                 XposedHelpers.callMethod(v, "setMeasuredDimension", w, h);
                 return null;
@@ -132,7 +123,7 @@ public class MainHook implements IXposedHookLoadPackage {
 
                     float d = dp(v, sizeDp);
                     float sw = dp(v, strokeDp);
-                    float cx = v.getWidth() / 2f;
+                    float cx = hollow ? v.getWidth() / 2f : dp(v, 1f) + d / 2f;
                     float cy = v.getHeight() / 2f;
                     float r = (d - sw) / 2f;
                     box.set(cx - r, cy - r, cx + r, cy + r);
@@ -145,13 +136,13 @@ public class MainHook implements IXposedHookLoadPackage {
                     arc.setStyle(Paint.Style.STROKE);
                     arc.setStrokeWidth(sw);
                     arc.setColor(color);
-                    arc.setStrokeCap(roundCap ? Paint.Cap.ROUND : Paint.Cap.BUTT);
+                    arc.setStrokeCap(Paint.Cap.ROUND);
 
                     c.drawArc(box, 0, 360, false, track);
                     float sweep = 360f * Math.max(0, Math.min(100, level)) / 100f;
                     if (sweep > 0f) c.drawArc(box, -90, sweep, false, arc);
 
-                    if (hollow && showPercent) {
+                    if (hollow) {
                         String s = String.valueOf(level);
                         float inner = d - 2f * sw;
                         txt.setColor(color);
@@ -192,30 +183,5 @@ public class MainHook implements IXposedHookLoadPackage {
                     : XposedHelpers.getIntField(v, "mLightColor");
         }
         return intensity > 0.5f ? 0xFF1A1A1A : 0xFFFFFFFF;
-    }
-
-    private void hookMeterView(ClassLoader cl) {
-        Class<?> meter = XposedHelpers.findClass(METER_VIEW, cl);
-        XC_MethodHook applyGap = new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam p) {
-                try {
-                    View self = (View) p.thisObject;
-                    Object container = XposedHelpers.getObjectField(p.thisObject, "mBatteryPercentContainer");
-                    if (!(container instanceof LinearLayout)) return;
-                    LinearLayout ll = (LinearLayout) container;
-                    ViewGroup.LayoutParams lp = ll.getLayoutParams();
-                    if (lp instanceof ViewGroup.MarginLayoutParams) {
-                        ((ViewGroup.MarginLayoutParams) lp).setMarginStart(Math.round(dp(self, gapDp)));
-                        ll.setLayoutParams(lp);
-                    }
-                    if (!showPercent) ll.setVisibility(View.GONE);
-                } catch (Throwable t) {
-                    XposedBridge.log("RoundBattery: applyGap failed: " + t);
-                }
-            }
-        };
-        XposedHelpers.findAndHookMethod(meter, "updateAll", applyGap);
-        XposedHelpers.findAndHookMethod(meter, "updateChargeAndText", applyGap);
     }
 }
