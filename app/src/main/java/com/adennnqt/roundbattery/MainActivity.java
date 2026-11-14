@@ -1,24 +1,27 @@
 package com.adennnqt.roundbattery;
 
+import android.animation.ArgbEvaluator;
+import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.content.res.ColorStateList;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.RectF;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.Button;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
-import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -34,6 +37,8 @@ public class MainActivity extends Activity {
     private boolean prefsShared = true;
     private float dens;
     private final List<RingText> rings = new ArrayList<>();
+    private final List<Object[]> sliders = new ArrayList<>();   // {SeekBar, TextView, key, def, min, tenths}
+    private final List<Object[]> switches = new ArrayList<>();  // {M3Switch, defaultChecked}
 
     private int col(int id) { return getColor(id); }
     private int dp(float v) { return Math.round(v * dens); }
@@ -53,10 +58,16 @@ public class MainActivity extends Activity {
         return t;
     }
 
+    private Drawable icon(int res, int color) {
+        Drawable d = getDrawable(res).mutate();
+        d.setTint(color);
+        return d;
+    }
+
     private LinearLayout card() {
         LinearLayout c = new LinearLayout(this);
         c.setOrientation(LinearLayout.VERTICAL);
-        c.setBackground(round(col(R.color.card), 20));
+        c.setBackground(round(col(R.color.card), 24));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.bottomMargin = dp(12);
@@ -70,10 +81,19 @@ public class MainActivity extends Activity {
         parent.addView(v, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
     }
 
+    /** Group label with the small accent bar in front, like the HTML. */
     private void groupLabel(LinearLayout parent, String s) {
-        TextView t = text(s, 13, col(R.color.text_secondary));
-        t.setPadding(dp(8), dp(4), 0, dp(8));
-        parent.addView(t);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(8), dp(4), dp(8), dp(8));
+        View bar = new View(this);
+        bar.setBackground(round(col(R.color.accent), 2));
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(dp(3), dp(14));
+        blp.setMarginEnd(dp(8));
+        row.addView(bar, blp);
+        row.addView(text(s, 13, col(R.color.text_secondary)));
+        parent.addView(row);
     }
 
     @Override
@@ -89,22 +109,34 @@ public class MainActivity extends Activity {
         }
         dens = getResources().getDisplayMetrics().density;
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(col(R.color.bg));
-        scroll.setFillViewport(true);
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setBackgroundColor(col(R.color.bg));
 
+        // Fixed top: header + live preview
+        LinearLayout top = new LinearLayout(this);
+        top.setOrientation(LinearLayout.VERTICAL);
+        top.setPadding(dp(14), dp(20), dp(14), dp(4));
+        buildHeader(top);
+        buildPreview(top);
+        page.addView(top, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        // Scrolling settings
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setVerticalScrollBarEnabled(false);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(14), dp(20), dp(14), dp(24));
+        root.setPadding(dp(14), dp(4), dp(14), dp(24));
         scroll.addView(root);
+        page.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        buildHeader(root);
-        buildPreview(root);
-
-        groupLabel(root, "Icon");
-        LinearLayout iconCard = card();
-        buildStyleRow(iconCard);
-        root.addView(iconCard);
+        groupLabel(root, "States");
+        LinearLayout statesCard = card();
+        buildStates(statesCard);
+        root.addView(statesCard);
 
         groupLabel(root, "Size and gap");
         LinearLayout ringCard = card();
@@ -114,52 +146,83 @@ public class MainActivity extends Activity {
         sliderRow(ringCard, "Track opacity", Cfg.K_TRACK, Cfg.D_TRACK, 0, 100, false, true);
         root.addView(ringCard);
 
-        groupLabel(root, "Control center");
-        LinearLayout ccCard = card();
-        switchRow(ccCard, "Rotation lock icon next to date", Cfg.K_ROTATE, Cfg.D_ROTATE);
-        root.addView(ccCard);
+        groupLabel(root, "Options");
+        LinearLayout optCard = card();
+        optionRow(optCard, R.drawable.ic_opt_battery, "Battery icon",
+                "Vertical battery instead of ring. Height follows Size",
+                sp.getInt(Cfg.K_STYLE, Cfg.D_STYLE) == 1, Cfg.D_STYLE == 1, false,
+                on -> sp.edit().putInt(Cfg.K_STYLE, on ? 1 : 0).apply());
+        optionRow(optCard, R.drawable.ic_opt_round, "Round line ends", "Softer ring edges",
+                sp.getBoolean(Cfg.K_ROUND, Cfg.D_ROUND), Cfg.D_ROUND, true,
+                on -> sp.edit().putBoolean(Cfg.K_ROUND, on).apply());
+        optionRow(optCard, R.drawable.ic_opt_lock, "Rotation lock icon",
+                "Next to the date in control center",
+                sp.getBoolean(Cfg.K_ROTATE, Cfg.D_ROTATE), Cfg.D_ROTATE, true,
+                on -> sp.edit().putBoolean(Cfg.K_ROTATE, on).apply());
+        root.addView(optCard);
 
-        Button apply = new Button(this);
-        apply.setText("Apply and restart System UI");
-        apply.setAllCaps(false);
-        apply.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        TextView apply = text("Apply and restart System UI", 15, col(R.color.on_accent));
         apply.setTypeface(Typeface.DEFAULT_BOLD);
-        apply.setTextColor(0xFFFFFFFF);
-        apply.setBackground(round(col(R.color.accent), 24));
-        apply.setStateListAnimator(null);
+        apply.setGravity(Gravity.CENTER);
+        apply.setCompoundDrawablePadding(dp(8));
+        Drawable chk = icon(R.drawable.ic_check, col(R.color.on_accent));
+        chk.setBounds(0, 0, dp(20), dp(20));
+        apply.setCompoundDrawables(chk, null, null, null);
+        apply.setBackground(round(col(R.color.accent), 26));
         apply.setOnClickListener(v -> restartSystemUi());
         LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
         alp.topMargin = dp(4);
         root.addView(apply, alp);
 
-        TextView hint = text("Needs LSPosed and root", 12, col(R.color.text_muted));
+        TextView hint = text("Needs LSPosed and root", 11, col(R.color.text_muted));
         hint.setGravity(Gravity.CENTER);
         hint.setPadding(0, dp(8), 0, 0);
         root.addView(hint);
 
-        setContentView(scroll);
+        setContentView(page);
     }
 
-    private void buildHeader(LinearLayout root) {
+    private void buildHeader(LinearLayout parent) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.BOTTOM);
+        row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(6), 0, dp(6), dp(14));
 
+        ImageView title = new ImageView(this);
+        title.setImageResource(R.drawable.ic_title);
+        title.setImageTintList(android.content.res.ColorStateList.valueOf(col(R.color.text_primary)));
+        title.setAdjustViewBounds(true);
+        title.setContentDescription("LL");
+        LinearLayout holder = new LinearLayout(this);
+        holder.addView(title, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(66)));
         LinearLayout left = new LinearLayout(this);
         left.setOrientation(LinearLayout.VERTICAL);
-        TextView title = text("Round Battery", 28, col(R.color.text_primary));
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        left.addView(title);
+        left.addView(holder);
 
         boolean active = isModuleActive() && prefsShared;
-        TextView status = text(
-                active ? "Module active in System UI"
-                       : "Not active. Enable it in LSPosed for System UI and this app.",
-                13, col(active ? R.color.success : R.color.danger));
-        status.setPadding(0, dp(4), dp(8), 0);
-        left.addView(status);
+        LinearLayout status = new LinearLayout(this);
+        status.setOrientation(LinearLayout.HORIZONTAL);
+        status.setGravity(Gravity.CENTER_VERTICAL);
+        View dot = new View(this);
+        GradientDrawable dd = new GradientDrawable();
+        dd.setShape(GradientDrawable.OVAL);
+        dd.setColor(col(active ? R.color.success : R.color.danger));
+        dot.setBackground(dd);
+        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(dp(8), dp(8));
+        dlp.setMarginEnd(dp(6));
+        status.addView(dot, dlp);
+        status.addView(text(active ? "Active" : "Inactive", 13, col(R.color.text_secondary)));
+        if (!active) {
+            status.setOnClickListener(v -> Toast.makeText(this,
+                    "Enable the module in LSPosed for System UI and this app, then reopen.",
+                    Toast.LENGTH_LONG).show());
+        }
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        clp.setMargins(dp(2), dp(2), 0, 0);
+        left.addView(status, clp);
         row.addView(left, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         TextView reset = text("Reset", 13, col(R.color.text_primary));
@@ -168,34 +231,34 @@ public class MainActivity extends Activity {
         reset.setOnClickListener(v -> resetAll());
         row.addView(reset);
 
-        root.addView(row);
+        parent.addView(row);
     }
 
-    private void buildPreview(LinearLayout root) {
+    private void buildPreview(LinearLayout parent) {
         LinearLayout hero = card();
-        hero.setPadding(dp(16), dp(16), dp(16), dp(16));
+        hero.setPadding(dp(14), dp(14), dp(14), dp(14));
 
         LinearLayout strip = new LinearLayout(this);
         strip.setOrientation(LinearLayout.HORIZONTAL);
         strip.setGravity(Gravity.CENTER_VERTICAL);
         strip.setPadding(dp(14), dp(16), dp(14), dp(16));
-        strip.setBackground(round(col(R.color.strip), 14));
+        strip.setBackground(round(col(R.color.strip), 16));
         strip.addView(text("04:49", 15, col(R.color.text_primary)),
                 new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         strip.addView(new RingText(this, 71, R.color.text_primary, 1.7f, 15));
         hero.addView(strip);
 
+        parent.addView(hero);
+    }
+
+    private void buildStates(LinearLayout card) {
         LinearLayout tiles = new LinearLayout(this);
         tiles.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        tlp.topMargin = dp(10);
-        hero.addView(tiles, tlp);
+        tiles.setPadding(dp(14), dp(14), dp(14), dp(14));
         addTile(tiles, 71, R.color.text_primary, "Normal", false);
         addTile(tiles, 45, R.color.success, "Charging", true);
         addTile(tiles, 12, R.color.danger, "Low", true);
-
-        root.addView(hero);
+        card.addView(tiles);
     }
 
     private void addTile(LinearLayout tiles, int pct, int colorRes, String label, boolean margin) {
@@ -203,7 +266,7 @@ public class MainActivity extends Activity {
         t.setOrientation(LinearLayout.VERTICAL);
         t.setGravity(Gravity.CENTER);
         t.setPadding(dp(4), dp(12), dp(4), dp(10));
-        t.setBackground(round(col(R.color.strip), 12));
+        t.setBackground(round(col(R.color.strip), 16));
         t.addView(new RingText(this, pct, colorRes, 1.2f, 12));
         TextView l = text(label, 11, col(R.color.text_secondary));
         l.setPadding(0, dp(6), 0, 0);
@@ -230,12 +293,13 @@ public class MainActivity extends Activity {
 
         SeekBar sb = new SeekBar(this);
         sb.setMax(max - min);
+        sb.setProgressDrawable(getDrawable(R.drawable.seek_progress));
+        sb.setThumb(getDrawable(R.drawable.seek_thumb));
+        sb.setSplitTrack(false);
+        sb.setBackground(null);
+        sb.setPadding(dp(10), 0, dp(10), 0);
         int cur = sp.getInt(key, def);
         sb.setProgress(cur - min);
-        ColorStateList accent = ColorStateList.valueOf(col(R.color.accent));
-        sb.setProgressTintList(accent);
-        sb.setThumbTintList(accent);
-        sb.setProgressBackgroundTintList(ColorStateList.valueOf(col(R.color.divider)));
         value.setText(fmt(cur, tenthsDp));
         sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar s, int p, boolean user) {
@@ -247,91 +311,58 @@ public class MainActivity extends Activity {
             @Override public void onStartTrackingTouch(SeekBar s) {}
             @Override public void onStopTrackingTouch(SeekBar s) {}
         });
-        row.addView(sb);
+        row.addView(sb, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(32)));
         card.addView(row);
         sliders.add(new Object[]{sb, value, key, def, min, tenthsDp});
     }
-
-    private final List<Object[]> sliders = new ArrayList<>();
 
     private static String fmt(int val, boolean tenthsDp) {
         return tenthsDp ? String.format(java.util.Locale.US, "%.1f dp", val / 10f) : val + "%";
     }
 
-    private TextView styleRing;
-    private TextView styleBattery;
+    private interface OnToggle { void on(boolean checked); }
 
-    private void buildStyleRow(LinearLayout card) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setPadding(dp(10), dp(10), dp(10), dp(10));
-        styleRing = styleChip("Ring", 0);
-        styleBattery = styleChip("Battery", 1);
-        row.addView(styleRing, new LinearLayout.LayoutParams(0, dp(40), 1f));
-        row.addView(styleBattery, new LinearLayout.LayoutParams(0, dp(40), 1f));
-        card.addView(row);
-        TextView hint = text("Battery: height follows Size, Thickness is not used. "
-                + "Only for the style with percent outside the icon.", 12, col(R.color.text_muted));
-        hint.setPadding(dp(16), 0, dp(16), dp(12));
-        card.addView(hint);
-        refreshStyleUi();
-    }
-
-    private TextView styleChip(String label, int value) {
-        TextView t = text(label, 15, col(R.color.text_primary));
-        t.setGravity(Gravity.CENTER);
-        t.setOnClickListener(v -> {
-            sp.edit().putInt(Cfg.K_STYLE, value).apply();
-            refreshStyleUi();
-            refresh();
-        });
-        return t;
-    }
-
-    private void refreshStyleUi() {
-        int cur = sp.getInt(Cfg.K_STYLE, Cfg.D_STYLE);
-        styleRing.setBackground(cur == 0 ? round(col(R.color.accent), 20) : round(0x00000000, 20));
-        styleRing.setTextColor(cur == 0 ? 0xFFFFFFFF : col(R.color.text_secondary));
-        styleBattery.setBackground(cur == 1 ? round(col(R.color.accent), 20) : round(0x00000000, 20));
-        styleBattery.setTextColor(cur == 1 ? 0xFFFFFFFF : col(R.color.text_secondary));
-    }
-
-    private final List<Object[]> switches = new ArrayList<>();
-
-    private void switchRow(LinearLayout card, String label, String key, boolean def) {
+    private void optionRow(LinearLayout card, int iconRes, String title, String sub,
+                           boolean checked, boolean def, boolean dividerAbove, OnToggle l) {
+        if (dividerAbove) divider(card);
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(16), dp(12), dp(16), dp(12));
-        row.addView(text(label, 15, col(R.color.text_primary)),
-                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        row.setPadding(dp(16), dp(14), dp(16), dp(14));
 
-        Switch sw = new Switch(this);
-        sw.setChecked(sp.getBoolean(key, def));
-        int[][] states = {{android.R.attr.state_checked}, {}};
-        sw.setTrackTintList(new ColorStateList(states,
-                new int[]{col(R.color.accent), col(R.color.divider)}));
-        sw.setThumbTintList(ColorStateList.valueOf(0xFFFFFFFF));
-        sw.setOnCheckedChangeListener((v, on) -> sp.edit().putBoolean(key, on).apply());
-        row.addView(sw);
+        ImageView ic = new ImageView(this);
+        ic.setImageDrawable(icon(iconRes, col(R.color.accent)));
+        LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(dp(22), dp(22));
+        ilp.setMarginEnd(dp(14));
+        row.addView(ic, ilp);
+
+        LinearLayout tx = new LinearLayout(this);
+        tx.setOrientation(LinearLayout.VERTICAL);
+        tx.addView(text(title, 15, col(R.color.text_primary)));
+        TextView b = text(sub, 12, col(R.color.text_secondary));
+        b.setPadding(0, dp(1), 0, 0);
+        tx.addView(b);
+        row.addView(tx, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        M3Switch sw = new M3Switch(this, checked);
+        sw.listener = on -> { l.on(on); refresh(); };
+        sw.setContentDescription(title);
+        row.addView(sw, new LinearLayout.LayoutParams(dp(52), dp(32)));
+        row.setOnClickListener(v -> sw.performClick());
         card.addView(row);
-        switches.add(new Object[]{sw, key, def});
+        switches.add(new Object[]{sw, def});
     }
 
     private void resetAll() {
-        SharedPreferences.Editor e = sp.edit();
-        for (Object[] s : sliders) e.putInt((String) s[2], (Integer) s[3]);
-        for (Object[] s : switches) e.putBoolean((String) s[1], (Boolean) s[2]);
-        e.putInt(Cfg.K_STYLE, Cfg.D_STYLE);
-        e.apply();
-        refreshStyleUi();
         for (Object[] s : sliders) {
             SeekBar sb = (SeekBar) s[0];
             int def = (Integer) s[3], min = (Integer) s[4];
             sb.setProgress(def - min);
             ((TextView) s[1]).setText(fmt(def, (Boolean) s[5]));
         }
-        for (Object[] s : switches) ((Switch) s[0]).setChecked((Boolean) s[2]);
+        // Switches write their own prefs through the listener.
+        for (Object[] s : switches) ((M3Switch) s[0]).setChecked((Boolean) s[1], true);
         refresh();
     }
 
@@ -348,6 +379,56 @@ public class MainActivity extends Activity {
             pr.waitFor();
         } catch (Exception e) {
             Toast.makeText(this, "Root failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** 52x32 switch: track + thumb that grows when on (same geometry as the HTML). */
+    private class M3Switch extends View {
+        private boolean checked;
+        private float t;
+        private OnToggle listener;
+        private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF r = new RectF();
+        private final ArgbEvaluator ev = new ArgbEvaluator();
+
+        M3Switch(Context c, boolean on) {
+            super(c);
+            checked = on;
+            t = on ? 1f : 0f;
+            setClickable(true);
+            setFocusable(true);
+            setOnClickListener(v -> setChecked(!checked, true));
+        }
+
+        void setChecked(boolean on, boolean notify) {
+            if (on == checked) return;
+            checked = on;
+            ValueAnimator a = ValueAnimator.ofFloat(t, on ? 1f : 0f);
+            a.setDuration(150);
+            a.addUpdateListener(an -> { t = (Float) an.getAnimatedValue(); invalidate(); });
+            a.start();
+            if (notify && listener != null) listener.on(on);
+        }
+
+        @Override
+        protected void onMeasure(int w, int h) { setMeasuredDimension(dp(52), dp(32)); }
+
+        @Override
+        protected void onDraw(Canvas c) {
+            float w = getWidth(), h = getHeight();
+            p.setColor((Integer) ev.evaluate(t, col(R.color.track), col(R.color.accent)));
+            r.set(0, 0, w, h);
+            c.drawRoundRect(r, h / 2f, h / 2f, p);
+            p.setColor((Integer) ev.evaluate(t, col(R.color.text_secondary), col(R.color.on_accent)));
+            c.drawCircle(dp(16) + dp(20) * t, h / 2f, dp(10) + dp(2) * t, p);
+        }
+
+        @Override
+        public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+            super.onInitializeAccessibilityNodeInfo(info);
+            info.setClassName("android.widget.Switch");
+            info.setCheckable(true);
+            info.setChecked(checked);
         }
     }
 
@@ -410,8 +491,8 @@ public class MainActivity extends Activity {
                 c.drawRoundRect(box, radius, radius, arc);
                 arc.setAlpha(255);
                 c.save();
-                android.graphics.Path clip = new android.graphics.Path();
-                clip.addRoundRect(box, radius, radius, android.graphics.Path.Direction.CW);
+                Path clip = new Path();
+                clip.addRoundRect(box, radius, radius, Path.Direction.CW);
                 c.clipPath(clip);
                 float fillH = bodyH * pct / 100f;
                 c.drawRect(0, top + h - fillH, w, top + h, arc);
@@ -420,7 +501,7 @@ public class MainActivity extends Activity {
                     float bw = w * 0.80f, bh = bodyH * 0.64f;
                     float bx = (w - bw) / 2f, by = top + capH + (bodyH - bh) / 2f;
                     float[] pts = {0.60f, 0f, 0.10f, 0.56f, 0.46f, 0.56f, 0.36f, 1f, 0.92f, 0.38f, 0.54f, 0.38f};
-                    android.graphics.Path bolt = new android.graphics.Path();
+                    Path bolt = new Path();
                     for (int i = 0; i < pts.length; i += 2) {
                         float px = bx + pts[i] * bw, py = by + pts[i + 1] * bh;
                         if (i == 0) bolt.moveTo(px, py); else bolt.lineTo(px, py);
@@ -442,7 +523,7 @@ public class MainActivity extends Activity {
                 arc.setStyle(Paint.Style.STROKE);
                 arc.setStrokeWidth(sw);
                 arc.setColor(color);
-                arc.setStrokeCap(Paint.Cap.ROUND);
+                arc.setStrokeCap(sp.getBoolean(Cfg.K_ROUND, Cfg.D_ROUND) ? Paint.Cap.ROUND : Paint.Cap.BUTT);
 
                 c.drawArc(box, 0, 360, false, track);
                 c.drawArc(box, -90, 360f * pct / 100f, false, arc);

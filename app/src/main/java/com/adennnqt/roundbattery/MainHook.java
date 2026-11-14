@@ -39,6 +39,7 @@ public class MainHook implements IXposedHookLoadPackage {
     private static float gapDp = Cfg.D_GAP / 10f;
     private static int trackAlpha = Cfg.D_TRACK;
     private static boolean rotateIcon = Cfg.D_ROTATE;
+    private static boolean roundEnds = Cfg.D_ROUND;
     private static int iconStyle = Cfg.D_STYLE;
     private static boolean warned = false;
 
@@ -62,6 +63,7 @@ public class MainHook implements IXposedHookLoadPackage {
             gapDp = prefs.getInt(Cfg.K_GAP, Cfg.D_GAP) / 10f;
             trackAlpha = prefs.getInt(Cfg.K_TRACK, Cfg.D_TRACK);
             rotateIcon = prefs.getBoolean(Cfg.K_ROTATE, Cfg.D_ROTATE);
+            roundEnds = prefs.getBoolean(Cfg.K_ROUND, Cfg.D_ROUND);
             iconStyle = prefs.getInt(Cfg.K_STYLE, Cfg.D_STYLE);
         } catch (Throwable t) {
             XposedBridge.log("RoundBattery: loadPrefs failed: " + t);
@@ -160,7 +162,7 @@ public class MainHook implements IXposedHookLoadPackage {
                     arc.setStyle(Paint.Style.STROKE);
                     arc.setStrokeWidth(sw);
                     arc.setColor(color);
-                    arc.setStrokeCap(Paint.Cap.ROUND);
+                    arc.setStrokeCap(roundEnds ? Paint.Cap.ROUND : Paint.Cap.BUTT);
 
                     c.drawArc(box, 0, 360, false, track);
                     float sweep = 360f * Math.max(0, Math.min(100, level)) / 100f;
