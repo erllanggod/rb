@@ -202,7 +202,7 @@ public class MainActivity extends Activity {
         frame.setOnApplyWindowInsetsListener((v, ins) -> {
             @SuppressWarnings("deprecation") int top = ins.getSystemWindowInsetTop();
             @SuppressWarnings("deprecation") int bot = ins.getSystemWindowInsetBottom();
-            hdContent.setPadding(dp(22), top + dp(20), dp(22), dp(22));
+            hdContent.setPadding(dp(22), top + dp(38), dp(22), dp(6));
             orbit.setCenterY(top + dp(20) + dp(57));
             root.setPadding(dp(14), dp(4), dp(14), dp(24) + bot);
             return ins;
@@ -233,7 +233,7 @@ public class MainActivity extends Activity {
         hdContent = new LinearLayout(this);
         hdContent.setOrientation(LinearLayout.VERTICAL);
         // Real top inset is applied by the insets listener in onCreate.
-        hdContent.setPadding(dp(22), dp(20), dp(22), dp(22));
+        hdContent.setPadding(dp(22), dp(38), dp(22), dp(6));
         // The status dot pulses past its own bounds, so none of its ancestors may clip it.
         hdContent.setClipChildren(false);
         hdContent.setClipToPadding(false);
