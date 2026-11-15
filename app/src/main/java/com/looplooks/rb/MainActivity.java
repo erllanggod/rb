@@ -452,6 +452,14 @@ public class MainActivity extends Activity {
 
         void setCenterY(float v) { cy = v; invalidate(); }
 
+        // Don't let the rings decide the header height: take the width, and only take a height
+        // when the parent already fixed one (the header height comes from the text next to it).
+        @Override
+        protected void onMeasure(int w, int h) {
+            int hh = MeasureSpec.getMode(h) == MeasureSpec.EXACTLY ? MeasureSpec.getSize(h) : 0;
+            setMeasuredDimension(MeasureSpec.getSize(w), hh);
+        }
+
         @Override
         protected void onAttachedToWindow() {
             super.onAttachedToWindow();
