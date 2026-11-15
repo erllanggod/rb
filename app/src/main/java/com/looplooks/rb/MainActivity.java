@@ -8,6 +8,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -18,6 +19,7 @@ import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -125,9 +127,18 @@ public class MainActivity extends Activity {
         dens = getResources().getDisplayMetrics().density;
         setupEdgeToEdge();
 
+        // The rings live on a full-screen layer behind the page, so nothing but the screen edge
+        // cuts them (the setting cards simply cover them).
+        FrameLayout frame = new FrameLayout(this);
+        frame.setBackgroundColor(col(R.color.bg));
+        orbit = new OrbitView(this);
+        frame.addView(orbit, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
-        page.setBackgroundColor(col(R.color.bg));
+        frame.addView(page, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         // Fixed top: banner header (orbit rings bleed to the screen edges)
         page.addView(buildHeader(), new LinearLayout.LayoutParams(
@@ -176,10 +187,10 @@ public class MainActivity extends Activity {
         reset.setGravity(Gravity.CENTER);
         reset.setPadding(dp(20), dp(12), dp(20), dp(12));
         reset.setClickable(true);
-        TypedValue ripple = new TypedValue();
-        if (getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true)) {
-            reset.setBackgroundResource(ripple.resourceId);
-        }
+        // Pill-shaped ripple (the default one is a square box on this theme).
+        reset.setBackground(new RippleDrawable(
+                ColorStateList.valueOf((col(R.color.accent) & 0x00FFFFFF) | 0x33000000),
+                null, round(Color.WHITE, 24)));
         reset.setOnClickListener(v -> resetAll());
         LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -188,7 +199,7 @@ public class MainActivity extends Activity {
         root.addView(reset, rlp);
 
         // Edge-to-edge: the system bars sit on top of the page, so pad around them here.
-        page.setOnApplyWindowInsetsListener((v, ins) -> {
+        frame.setOnApplyWindowInsetsListener((v, ins) -> {
             @SuppressWarnings("deprecation") int top = ins.getSystemWindowInsetTop();
             @SuppressWarnings("deprecation") int bot = ins.getSystemWindowInsetBottom();
             hdContent.setPadding(dp(22), top + dp(20), dp(22), dp(22));
@@ -196,8 +207,8 @@ public class MainActivity extends Activity {
             root.setPadding(dp(14), dp(4), dp(14), dp(24) + bot);
             return ins;
         });
-        setContentView(page);
-        page.requestApplyInsets();
+        setContentView(frame);
+        frame.requestApplyInsets();
     }
 
     @SuppressWarnings("deprecation")
@@ -218,10 +229,6 @@ public class MainActivity extends Activity {
     private FrameLayout buildHeader() {
         FrameLayout header = new FrameLayout(this);
         header.setClipChildren(true);
-
-        orbit = new OrbitView(this);
-        header.addView(orbit, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         hdContent = new LinearLayout(this);
         hdContent.setOrientation(LinearLayout.VERTICAL);
