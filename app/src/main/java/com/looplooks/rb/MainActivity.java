@@ -29,6 +29,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.animation.LinearInterpolator;
 import android.view.animation.PathInterpolator;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -202,7 +203,7 @@ public class MainActivity extends Activity {
         frame.setOnApplyWindowInsetsListener((v, ins) -> {
             @SuppressWarnings("deprecation") int top = ins.getSystemWindowInsetTop();
             @SuppressWarnings("deprecation") int bot = ins.getSystemWindowInsetBottom();
-            hdContent.setPadding(dp(22), top + dp(38), dp(22), dp(6));
+            hdContent.setPadding(dp(22), top + dp(38), dp(22), dp(16));
             orbit.setCenterY(top + dp(20) + dp(57));
             root.setPadding(dp(14), dp(4), dp(14), dp(24) + bot);
             return ins;
@@ -233,8 +234,7 @@ public class MainActivity extends Activity {
         hdContent = new LinearLayout(this);
         hdContent.setOrientation(LinearLayout.VERTICAL);
         // Real top inset is applied by the insets listener in onCreate.
-        hdContent.setPadding(dp(22), dp(38), dp(22), dp(6));
-        // The status dot pulses past its own bounds, so none of its ancestors may clip it.
+        hdContent.setPadding(dp(22), dp(38), dp(22), dp(16));
         hdContent.setClipChildren(false);
         hdContent.setClipToPadding(false);
         header.setClipChildren(false);
@@ -246,32 +246,15 @@ public class MainActivity extends Activity {
         hdContent.addView(new Wordmark(this, "v" + ver), new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        // Status is shown by the green satellite on the orbit (red and still when inactive).
         boolean active = isModuleActive() && prefsShared;
-        LinearLayout status = new LinearLayout(this);
-        status.setOrientation(LinearLayout.HORIZONTAL);
-        status.setGravity(Gravity.CENTER_VERTICAL);
-        status.setClipChildren(false);
-        // 20dp canvas for the pulse, laid out as the 6dp dot: -7dp margins on every side.
-        PulseDot dot = new PulseDot(this, col(active ? R.color.success : R.color.danger), active);
-        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(dp(20), dp(20));
-        dlp.setMargins(dp(-7), dp(-7), 0, dp(-7));
-        status.addView(dot, dlp);
-        TextView st = text(active ? "Active" : "Inactive", 12, col(R.color.text_secondary));
-        st.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        st.setLetterSpacing(0.01f);
-        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        tlp.setMarginStart(dp(8));
-        status.addView(st, tlp);
+        orbit.setActive(active);
+        orbit.setContentDescription(active ? "Module active" : "Module inactive");
         if (!active) {
-            status.setOnClickListener(v -> Toast.makeText(this,
+            hdContent.setOnClickListener(v -> Toast.makeText(this,
                     "Enable the module in LSPosed for System UI and this app, then reopen.",
                     Toast.LENGTH_LONG).show());
         }
-        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        clp.setMargins(dp(2), dp(16), 0, 0);
-        hdContent.addView(status, clp);
 
         header.addView(hdContent, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -442,6 +425,10 @@ public class MainActivity extends Activity {
         private final RectF oval = new RectF();
         private float cy;
         private float level = 75f;
+        private boolean active;
+        private float satAngle = 120f;   // degrees, 0 = 3 o'clock, clockwise
+        private float ping;             // 0..1 pulse progress
+        private ValueAnimator spinAnim, pingAnim;
         private final BroadcastReceiver rx = new BroadcastReceiver() {
             @Override public void onReceive(Context ctx, Intent i) {
                 int l = i.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
@@ -459,6 +446,36 @@ public class MainActivity extends Activity {
 
         void setCenterY(float v) { cy = v; invalidate(); }
 
+        void setActive(boolean a) {
+            active = a;
+            if (isAttachedToWindow()) startAnims();
+            invalidate();
+        }
+
+        private void startAnims() {
+            stopAnims();
+            if (!active || !ValueAnimator.areAnimatorsEnabled()) return;
+            spinAnim = ValueAnimator.ofFloat(0f, 360f);
+            spinAnim.setDuration(28000);
+            spinAnim.setInterpolator(new LinearInterpolator());
+            spinAnim.setRepeatCount(ValueAnimator.INFINITE);
+            spinAnim.addUpdateListener(a -> { satAngle = 120f + (float) a.getAnimatedValue(); invalidate(); });
+            spinAnim.start();
+            pingAnim = ValueAnimator.ofFloat(0f, 1f);
+            pingAnim.setDuration(2000);
+            pingAnim.setInterpolator(new PathInterpolator(0f, 0f, 0.58f, 1f));
+            pingAnim.setRepeatCount(ValueAnimator.INFINITE);
+            pingAnim.addUpdateListener(a -> { ping = (float) a.getAnimatedValue(); invalidate(); });
+            pingAnim.start();
+        }
+
+        private void stopAnims() {
+            if (spinAnim != null) spinAnim.cancel();
+            if (pingAnim != null) pingAnim.cancel();
+            spinAnim = null;
+            pingAnim = null;
+        }
+
         // Don't let the rings decide the header height: take the width, and only take a height
         // when the parent already fixed one (the header height comes from the text next to it).
         @Override
@@ -475,10 +492,12 @@ public class MainActivity extends Activity {
                     ? getContext().registerReceiver(rx, f, Context.RECEIVER_NOT_EXPORTED)
                     : getContext().registerReceiver(rx, f);
             if (st != null) rx.onReceive(getContext(), st);
+            startAnims();
         }
 
         @Override
         protected void onDetachedFromWindow() {
+            stopAnims();
             try { getContext().unregisterReceiver(rx); } catch (Exception ignored) {}
             super.onDetachedFromWindow();
         }
@@ -506,6 +525,18 @@ public class MainActivity extends Activity {
             double a = Math.toRadians(-90f + sweep);
             p.setStyle(Paint.Style.FILL);
             c.drawCircle((float) (cx + r * Math.cos(a)), (float) (cy + r * Math.sin(a)), dp(7), p);
+            // status satellite on the outer orbit: green + pulsing + slowly orbiting when active
+            double sa = Math.toRadians(satAngle);
+            float sx = (float) (cx + dp(96) * Math.cos(sa));
+            float sy = (float) (cy + dp(96) * Math.sin(sa));
+            int sc = col(active ? R.color.success : R.color.danger);
+            if (active) {
+                p.setColor(sc);
+                p.setAlpha((int) (0.5f * 255f * (1f - ping)));
+                c.drawCircle(sx, sy, dp(4) + dp(9) * ping, p);
+            }
+            p.setColor(sc);
+            c.drawCircle(sx, sy, dp(4), p);
             p.setStyle(Paint.Style.STROKE);
         }
     }
