@@ -3,21 +3,32 @@ package com.looplooks.rb;
 import android.animation.ArgbEvaluator;
 import android.animation.ValueAnimator;
 import android.app.Activity;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
 import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.DashPathEffect;
 import android.graphics.Paint;
+import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.os.BatteryManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.animation.PathInterpolator;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -38,9 +49,14 @@ public class MainActivity extends Activity {
     private float dens;
     private final List<Object[]> sliders = new ArrayList<>();   // {SeekBar, TextView, key, def, min, tenths}
     private final List<Object[]> switches = new ArrayList<>();  // {M3Switch, defaultChecked}
+    private LinearLayout hdContent;
+    private OrbitView orbit;
 
     private int col(int id) { return getColor(id); }
     private int dp(float v) { return Math.round(v * dens); }
+    private float spx(float v) {
+        return TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v, getResources().getDisplayMetrics());
+    }
 
     private GradientDrawable round(int color, float radiusDp) {
         GradientDrawable g = new GradientDrawable();
@@ -107,17 +123,14 @@ public class MainActivity extends Activity {
             prefsShared = false;
         }
         dens = getResources().getDisplayMetrics().density;
+        setupEdgeToEdge();
 
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
         page.setBackgroundColor(col(R.color.bg));
 
-        // Fixed top: header + live preview
-        LinearLayout top = new LinearLayout(this);
-        top.setOrientation(LinearLayout.VERTICAL);
-        top.setPadding(dp(14), dp(20), dp(14), dp(4));
-        buildHeader(top);
-        page.addView(top, new LinearLayout.LayoutParams(
+        // Fixed top: banner header (orbit rings bleed to the screen edges)
+        page.addView(buildHeader(), new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         // Scrolling settings
@@ -174,32 +187,57 @@ public class MainActivity extends Activity {
         rlp.topMargin = dp(6);
         root.addView(reset, rlp);
 
+        // Edge-to-edge: the system bars sit on top of the page, so pad around them here.
+        page.setOnApplyWindowInsetsListener((v, ins) -> {
+            @SuppressWarnings("deprecation") int top = ins.getSystemWindowInsetTop();
+            @SuppressWarnings("deprecation") int bot = ins.getSystemWindowInsetBottom();
+            hdContent.setPadding(dp(22), top + dp(20), dp(22), dp(22));
+            orbit.setCenterY(top + dp(20) + dp(57));
+            root.setPadding(dp(14), dp(4), dp(14), dp(24) + bot);
+            return ins;
+        });
         setContentView(page);
+        page.requestApplyInsets();
     }
 
-    private void buildHeader(LinearLayout parent) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(8), 0, dp(8), dp(18));
-        // The status dot pulses past its own bounds, so none of its ancestors may clip it.
-        row.setClipChildren(false);
-        row.setClipToPadding(false);
-        parent.setClipChildren(false);
-        parent.setClipToPadding(false);
+    @SuppressWarnings("deprecation")
+    private void setupEdgeToEdge() {
+        Window w = getWindow();
+        w.setStatusBarColor(Color.TRANSPARENT);
+        w.setNavigationBarColor(Color.TRANSPARENT);
+        if (Build.VERSION.SDK_INT >= 29) w.setNavigationBarContrastEnforced(false);
+        boolean night = (getResources().getConfiguration().uiMode
+                & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+        int f = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULL_SCREEN
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+        if (!night) f |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+        w.getDecorView().setSystemUiVisibility(f);
+    }
 
-        ImageView title = new ImageView(this);
-        title.setImageResource(R.drawable.ic_title);
-        title.setImageTintList(android.content.res.ColorStateList.valueOf(col(R.color.text_primary)));
-        title.setAdjustViewBounds(true);
-        title.setContentDescription("LL");
-        LinearLayout holder = new LinearLayout(this);
-        holder.addView(title, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(64)));
-        LinearLayout left = new LinearLayout(this);
-        left.setOrientation(LinearLayout.VERTICAL);
-        left.setClipChildren(false);
-        left.addView(holder);
+    private FrameLayout buildHeader() {
+        FrameLayout header = new FrameLayout(this);
+        header.setClipChildren(true);
+
+        orbit = new OrbitView(this);
+        header.addView(orbit, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        hdContent = new LinearLayout(this);
+        hdContent.setOrientation(LinearLayout.VERTICAL);
+        // Real top inset is applied by the insets listener in onCreate.
+        hdContent.setPadding(dp(22), dp(20), dp(22), dp(22));
+        // The status dot pulses past its own bounds, so none of its ancestors may clip it.
+        hdContent.setClipChildren(false);
+        hdContent.setClipToPadding(false);
+        header.setClipChildren(false);
+
+        String ver = "1.0";
+        try {
+            ver = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception ignored) {}
+        hdContent.addView(new Wordmark(this, "v" + ver), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         boolean active = isModuleActive() && prefsShared;
         LinearLayout status = new LinearLayout(this);
@@ -211,10 +249,13 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(dp(20), dp(20));
         dlp.setMargins(dp(-7), dp(-7), 0, dp(-7));
         status.addView(dot, dlp);
-        TextView st = text(active ? "Active" : "Inactive", 10, col(R.color.text_secondary));
+        TextView st = text(active ? "Active" : "Inactive", 12, col(R.color.text_secondary));
         st.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         st.setLetterSpacing(0.01f);
-        status.addView(st);
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        tlp.setMarginStart(dp(8));
+        status.addView(st, tlp);
         if (!active) {
             status.setOnClickListener(v -> Toast.makeText(this,
                     "Enable the module in LSPosed for System UI and this app, then reopen.",
@@ -222,11 +263,12 @@ public class MainActivity extends Activity {
         }
         LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        clp.setMargins(dp(2), dp(6), 0, 0);
-        left.addView(status, clp);
-        row.addView(left, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        clp.setMargins(dp(2), dp(16), 0, 0);
+        hdContent.addView(status, clp);
 
-        parent.addView(row);
+        header.addView(hdContent, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return header;
     }
 
     private void sliderRow(LinearLayout card, String label, String key, int def,
@@ -325,6 +367,131 @@ public class MainActivity extends Activity {
             pr.waitFor();
         } catch (Exception e) {
             Toast.makeText(this, "Root failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /**
+     * Two-line "LoopLooks" in the system font. The stem of the p (line 1) runs down into the stem
+     * of the k (line 2): the line gap is measured from the real glyph bounds so they always touch,
+     * whatever the system font is. p and k use the accent color, v1.0 sits after "Looks".
+     */
+    private class Wordmark extends View {
+        private final Paint main = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint small = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final String ver;
+        private float xp, xk, xs, xv, base1, base2;
+
+        Wordmark(Context c, String ver) {
+            super(c);
+            this.ver = ver;
+            main.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+            main.setTextSize(spx(36));
+            small.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+            small.setTextSize(spx(12));
+            small.setColor(col(R.color.text_muted));
+            setContentDescription("LoopLooks");
+        }
+
+        @Override
+        protected void onMeasure(int w, int h) {
+            Rect rL = new Rect(), rp = new Rect(), rk = new Rect();
+            main.getTextBounds("L", 0, 1, rL);
+            main.getTextBounds("p", 0, 1, rp);
+            main.getTextBounds("k", 0, 1, rk);
+            base1 = -rL.top;
+            // p descender bottom meets k ascender top, with 1dp of overlap so the join is solid.
+            base2 = base1 + rp.bottom + (-rk.top) - dp(1);
+            xp = main.measureText("Loo");
+            xk = xp + (rp.left - rk.left);          // line the two stems up exactly
+            xs = xk + main.measureText("k");
+            xv = xs + main.measureText("s") + dp(6);
+            float line1 = xp + main.measureText("p");
+            float line2 = xv + small.measureText(ver);
+            setMeasuredDimension((int) Math.ceil(Math.max(line1, line2)) + dp(2),
+                    (int) Math.ceil(base2) + dp(3));
+        }
+
+        @Override
+        protected void onDraw(Canvas c) {
+            int primary = col(R.color.text_primary), accent = col(R.color.accent);
+            main.setColor(primary);
+            c.drawText("Loo", 0, base1, main);
+            c.drawText("Loo", 0, base2, main);
+            c.drawText("s", xs, base2, main);
+            main.setColor(accent);
+            c.drawText("p", xp, base1, main);
+            c.drawText("k", xk, base2, main);
+            c.drawText(ver, xv, base2, small);
+        }
+    }
+
+    /**
+     * Banner rings: dashed outer orbit, a track ring with an accent arc for the battery level and
+     * a dot at the end of the arc, plus a faint inner ring. Centered near the right edge so the
+     * rings bleed off the screen. Follows the real battery level.
+     */
+    private class OrbitView extends View {
+        private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF oval = new RectF();
+        private float cy;
+        private float level = 75f;
+        private final BroadcastReceiver rx = new BroadcastReceiver() {
+            @Override public void onReceive(Context ctx, Intent i) {
+                int l = i.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+                int s = i.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
+                if (l >= 0 && s > 0) { level = l * 100f / s; invalidate(); }
+            }
+        };
+
+        OrbitView(Context c) {
+            super(c);
+            p.setStyle(Paint.Style.STROKE);
+            p.setStrokeWidth(dp(2));
+            cy = dp(77);
+        }
+
+        void setCenterY(float v) { cy = v; invalidate(); }
+
+        @Override
+        protected void onAttachedToWindow() {
+            super.onAttachedToWindow();
+            IntentFilter f = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+            Intent st = Build.VERSION.SDK_INT >= 33
+                    ? getContext().registerReceiver(rx, f, Context.RECEIVER_NOT_EXPORTED)
+                    : getContext().registerReceiver(rx, f);
+            if (st != null) rx.onReceive(getContext(), st);
+        }
+
+        @Override
+        protected void onDetachedFromWindow() {
+            try { getContext().unregisterReceiver(rx); } catch (Exception ignored) {}
+            super.onDetachedFromWindow();
+        }
+
+        @Override
+        protected void onDraw(Canvas c) {
+            float cx = getWidth() - dp(31);
+            // dashed outer orbit
+            p.setColor(col(R.color.divider));
+            p.setPathEffect(new DashPathEffect(new float[]{dp(2), dp(8)}, 0));
+            c.drawCircle(cx, cy, dp(96), p);
+            p.setPathEffect(null);
+            // inner faint ring
+            p.setColor(col(R.color.card));
+            c.drawCircle(cx, cy, dp(40), p);
+            // track + level arc
+            float r = dp(68);
+            p.setColor(col(R.color.track));
+            c.drawCircle(cx, cy, r, p);
+            p.setColor(col(R.color.accent));
+            oval.set(cx - r, cy - r, cx + r, cy + r);
+            float sweep = 360f * Math.max(0f, Math.min(100f, level)) / 100f;
+            c.drawArc(oval, -90f, sweep, false, p);
+            // dot at the end of the arc
+            double a = Math.toRadians(-90f + sweep);
+            p.setStyle(Paint.Style.FILL);
+            c.drawCircle((float) (cx + r * Math.cos(a)), (float) (cy + r * Math.sin(a)), dp(7), p);
+            p.setStyle(Paint.Style.STROKE);
         }
     }
 
