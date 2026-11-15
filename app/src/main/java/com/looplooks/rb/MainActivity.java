@@ -17,6 +17,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.animation.PathInterpolator;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -68,7 +69,7 @@ public class MainActivity extends Activity {
         c.setBackground(round(col(R.color.card), 24));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin = dp(12);
+        lp.bottomMargin = dp(14);
         c.setLayoutParams(lp);
         return c;
     }
@@ -87,10 +88,10 @@ public class MainActivity extends Activity {
         row.setPadding(dp(8), dp(4), dp(8), dp(8));
         View bar = new View(this);
         bar.setBackground(round(col(R.color.accent), 2));
-        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(dp(3), dp(14));
-        blp.setMarginEnd(dp(8));
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(dp(3), dp(16));
+        blp.setMarginEnd(dp(10));
         row.addView(bar, blp);
-        row.addView(text(s, 13, col(R.color.text_secondary)));
+        row.addView(text(s, 14, col(R.color.text_secondary)));
         parent.addView(row);
     }
 
@@ -130,21 +131,20 @@ public class MainActivity extends Activity {
         page.addView(scroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        groupLabel(root, "Size and gap");
+        groupLabel(root, "Ring");
         LinearLayout ringCard = card();
         sliderRow(ringCard, "Size", Cfg.K_SIZE, Cfg.D_SIZE, 60, 260, true, false);
         sliderRow(ringCard, "Thickness", Cfg.K_STROKE, Cfg.D_STROKE, 10, 80, true, true);
-        sliderRow(ringCard, "Gap to percent", Cfg.K_GAP, Cfg.D_GAP, 0, 100, true, true);
+        sliderRow(ringCard, "Gap", Cfg.K_GAP, Cfg.D_GAP, 0, 100, true, true);
         sliderRow(ringCard, "Track opacity", Cfg.K_TRACK, Cfg.D_TRACK, 0, 100, false, true);
         root.addView(ringCard);
 
         groupLabel(root, "Options");
         LinearLayout optCard = card();
-        optionRow(optCard, R.drawable.ic_opt_round, "Round line ends", "Softer ring edges",
+        optionRow(optCard, R.drawable.ic_opt_round, "Round line ends", null,
                 sp.getBoolean(Cfg.K_ROUND, Cfg.D_ROUND), Cfg.D_ROUND, false,
                 on -> sp.edit().putBoolean(Cfg.K_ROUND, on).apply());
-        optionRow(optCard, R.drawable.ic_opt_lock, "Rotation lock icon",
-                "Next to the date in control center",
+        optionRow(optCard, R.drawable.ic_opt_lock, "Rotation lock icon", null,
                 sp.getBoolean(Cfg.K_ROTATE, Cfg.D_ROTATE), Cfg.D_ROTATE, true,
                 on -> sp.edit().putBoolean(Cfg.K_ROTATE, on).apply());
         root.addView(optCard);
@@ -156,8 +156,23 @@ public class MainActivity extends Activity {
         apply.setOnClickListener(v -> restartSystemUi());
         LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
-        alp.topMargin = dp(4);
+        alp.topMargin = dp(2);
         root.addView(apply, alp);
+
+        TextView reset = text("Reset to default", 14, col(R.color.text_secondary));
+        reset.setGravity(Gravity.CENTER);
+        reset.setPadding(dp(20), dp(12), dp(20), dp(12));
+        reset.setClickable(true);
+        TypedValue ripple = new TypedValue();
+        if (getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true)) {
+            reset.setBackgroundResource(ripple.resourceId);
+        }
+        reset.setOnClickListener(v -> resetAll());
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rlp.gravity = Gravity.CENTER_HORIZONTAL;
+        rlp.topMargin = dp(6);
+        root.addView(reset, rlp);
 
         setContentView(page);
     }
@@ -166,7 +181,12 @@ public class MainActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(6), 0, dp(6), dp(14));
+        row.setPadding(dp(8), 0, dp(8), dp(18));
+        // The status dot pulses past its own bounds, so none of its ancestors may clip it.
+        row.setClipChildren(false);
+        row.setClipToPadding(false);
+        parent.setClipChildren(false);
+        parent.setClipToPadding(false);
 
         ImageView title = new ImageView(this);
         title.setImageResource(R.drawable.ic_title);
@@ -175,24 +195,26 @@ public class MainActivity extends Activity {
         title.setContentDescription("LL");
         LinearLayout holder = new LinearLayout(this);
         holder.addView(title, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(66)));
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(64)));
         LinearLayout left = new LinearLayout(this);
         left.setOrientation(LinearLayout.VERTICAL);
+        left.setClipChildren(false);
         left.addView(holder);
 
         boolean active = isModuleActive() && prefsShared;
         LinearLayout status = new LinearLayout(this);
         status.setOrientation(LinearLayout.HORIZONTAL);
         status.setGravity(Gravity.CENTER_VERTICAL);
-        View dot = new View(this);
-        GradientDrawable dd = new GradientDrawable();
-        dd.setShape(GradientDrawable.OVAL);
-        dd.setColor(col(active ? R.color.success : R.color.danger));
-        dot.setBackground(dd);
-        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(dp(8), dp(8));
-        dlp.setMarginEnd(dp(6));
+        status.setClipChildren(false);
+        // 20dp canvas for the pulse, laid out as the 6dp dot: -7dp margins on every side.
+        PulseDot dot = new PulseDot(this, col(active ? R.color.success : R.color.danger), active);
+        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(dp(20), dp(20));
+        dlp.setMargins(dp(-7), dp(-7), 0, dp(-7));
         status.addView(dot, dlp);
-        status.addView(text(active ? "Active" : "Inactive", 13, col(R.color.text_secondary)));
+        TextView st = text(active ? "Active" : "Inactive", 10, col(R.color.text_secondary));
+        st.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        st.setLetterSpacing(0.01f);
+        status.addView(st);
         if (!active) {
             status.setOnClickListener(v -> Toast.makeText(this,
                     "Enable the module in LSPosed for System UI and this app, then reopen.",
@@ -200,15 +222,9 @@ public class MainActivity extends Activity {
         }
         LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        clp.setMargins(dp(2), dp(2), 0, 0);
+        clp.setMargins(dp(2), dp(6), 0, 0);
         left.addView(status, clp);
         row.addView(left, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        TextView reset = text("Reset", 13, col(R.color.text_primary));
-        reset.setPadding(dp(14), dp(7), dp(14), dp(7));
-        reset.setBackground(round(col(R.color.card), 20));
-        reset.setOnClickListener(v -> resetAll());
-        row.addView(reset);
 
         parent.addView(row);
     }
@@ -218,12 +234,12 @@ public class MainActivity extends Activity {
         if (dividerAbove) divider(card);
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.VERTICAL);
-        row.setPadding(dp(16), dp(14), dp(16), dp(8));
+        row.setPadding(dp(16), dp(14), dp(16), dp(6));
 
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         TextView name = text(label, 15, col(R.color.text_primary));
-        TextView value = text("", 15, col(R.color.accent));
+        TextView value = text("", 15, col(R.color.text_secondary));
         head.addView(name, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         head.addView(value);
         row.addView(head);
@@ -265,20 +281,22 @@ public class MainActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(16), dp(14), dp(16), dp(14));
+        row.setPadding(dp(16), dp(16), dp(16), dp(16));
 
         ImageView ic = new ImageView(this);
         ic.setImageDrawable(icon(iconRes, col(R.color.accent)));
-        LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(dp(22), dp(22));
+        LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(dp(24), dp(24));
         ilp.setMarginEnd(dp(14));
         row.addView(ic, ilp);
 
         LinearLayout tx = new LinearLayout(this);
         tx.setOrientation(LinearLayout.VERTICAL);
         tx.addView(text(title, 15, col(R.color.text_primary)));
-        TextView b = text(sub, 12, col(R.color.text_secondary));
-        b.setPadding(0, dp(1), 0, 0);
-        tx.addView(b);
+        if (sub != null) {
+            TextView b = text(sub, 12, col(R.color.text_secondary));
+            b.setPadding(0, dp(1), 0, 0);
+            tx.addView(b);
+        }
         row.addView(tx, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         M3Switch sw = new M3Switch(this, checked);
@@ -307,6 +325,59 @@ public class MainActivity extends Activity {
             pr.waitFor();
         } catch (Exception e) {
             Toast.makeText(this, "Root failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /**
+     * Status dot (6dp) with the soft pulse ring from the preview: the ring grows 1x -> 3.2x while it
+     * fades from 55% to 0, every 2s, ease-out. Only the active state pulses, and only when system
+     * animations are on.
+     */
+    private class PulseDot extends View {
+        private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final int color;
+        private final boolean pulse;
+        private float t;
+        private ValueAnimator anim;
+
+        PulseDot(Context c, int color, boolean pulse) {
+            super(c);
+            this.color = color;
+            this.pulse = pulse;
+        }
+
+        @Override
+        protected void onMeasure(int w, int h) { setMeasuredDimension(dp(20), dp(20)); }
+
+        @Override
+        protected void onAttachedToWindow() {
+            super.onAttachedToWindow();
+            if (pulse && ValueAnimator.areAnimatorsEnabled()) {
+                anim = ValueAnimator.ofFloat(0f, 1f);
+                anim.setDuration(2000);
+                anim.setRepeatCount(ValueAnimator.INFINITE);
+                anim.setInterpolator(new PathInterpolator(0f, 0f, 0.58f, 1f));
+                anim.addUpdateListener(an -> { t = (Float) an.getAnimatedValue(); invalidate(); });
+                anim.start();
+            }
+        }
+
+        @Override
+        protected void onDetachedFromWindow() {
+            if (anim != null) { anim.cancel(); anim = null; }
+            super.onDetachedFromWindow();
+        }
+
+        @Override
+        protected void onDraw(Canvas c) {
+            float cx = getWidth() / 2f, cy = getHeight() / 2f, r = dp(3);
+            if (anim != null) {
+                p.setColor(color);
+                p.setAlpha(Math.round(255 * 0.55f * (1f - t)));
+                c.drawCircle(cx, cy, r * (1f + 2.2f * t), p);
+            }
+            p.setColor(color);
+            c.drawCircle(cx, cy, r, p);
         }
     }
 
