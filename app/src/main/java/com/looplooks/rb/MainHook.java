@@ -11,6 +11,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.TextView;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -40,6 +41,8 @@ public class MainHook implements IXposedHookLoadPackage {
     private static int trackAlpha = Cfg.D_TRACK;
     private static boolean rotateIcon = Cfg.D_ROTATE;
     private static boolean roundEnds = Cfg.D_ROUND;
+    private static int iconStyle = Cfg.D_ICON;           // 0 = ring, 1 = stock icon
+    private static boolean percentLeft = Cfg.D_PCT_LEFT;
     private static boolean warned = false;
 
     private static void loadPrefs() {
@@ -63,6 +66,8 @@ public class MainHook implements IXposedHookLoadPackage {
             trackAlpha = prefs.getInt(Cfg.K_TRACK, Cfg.D_TRACK);
             rotateIcon = prefs.getBoolean(Cfg.K_ROTATE, Cfg.D_ROTATE);
             roundEnds = prefs.getBoolean(Cfg.K_ROUND, Cfg.D_ROUND);
+            iconStyle = prefs.getInt(Cfg.K_ICON, Cfg.D_ICON);
+            percentLeft = prefs.getBoolean(Cfg.K_PCT_LEFT, Cfg.D_PCT_LEFT);
         } catch (Throwable t) {
             XposedBridge.log("RoundBattery: loadPrefs failed: " + t);
         }
@@ -92,6 +97,11 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("RoundBattery: hollow view hook failed: " + t);
         }
         try {
+            hookMeter(lpparam.classLoader);
+        } catch (Throwable t) {
+            XposedBridge.log("RoundBattery: meter view hook failed: " + t);
+        }
+        try {
             hookDateView(lpparam.classLoader);
         } catch (Throwable t) {
             XposedBridge.log("RoundBattery: date view hook failed: " + t);
@@ -111,8 +121,12 @@ public class MainHook implements IXposedHookLoadPackage {
     private void hookIcon(Class<?> icon, final boolean hollow) {
         XposedHelpers.findAndHookMethod(icon, "onMeasure", int.class, int.class, new XC_MethodReplacement() {
             @Override
-            protected Object replaceHookedMethod(MethodHookParam p) {
+            protected Object replaceHookedMethod(MethodHookParam p) throws Throwable {
                 loadPrefs();
+                if (iconStyle == 1) {
+                    // Default icon: leave the stock measure alone.
+                    return XposedBridge.invokeOriginalMethod(p.method, p.thisObject, p.args);
+                }
                 View v = (View) p.thisObject;
                 // Non-hollow: 1dp left pad + ring + gap on the right (this is the gap to the percent text).
                 // Hollow (percent inside the ring): ring + 1dp each side, no gap.
@@ -134,6 +148,11 @@ public class MainHook implements IXposedHookLoadPackage {
             @Override
             protected Object replaceHookedMethod(MethodHookParam p) {
                 try {
+                    if (iconStyle == 1) {
+                        // Default icon: let the stock onDraw run.
+                        XposedBridge.invokeOriginalMethod(p.method, p.thisObject, p.args);
+                        return null;
+                    }
                     View v = (View) p.thisObject;
                     Canvas c = (Canvas) p.args[0];
                     int level = XposedHelpers.getIntField(v, f(hollow, "Level"));
@@ -141,7 +160,9 @@ public class MainHook implements IXposedHookLoadPackage {
 
                     float d = dp(v, sizeDp);
                     float sw = dp(v, strokeDp);
-                    float cx = hollow ? v.getWidth() / 2f : dp(v, 1f) + d / 2f;
+                    // Percent on the left: the gap sits in front of the ring, mirroring the right-hand layout.
+                    float cx = hollow ? v.getWidth() / 2f
+                            : (percentLeft ? dp(v, gapDp) : dp(v, 1f)) + d / 2f;
                     float cy = v.getHeight() / 2f;
                     float r = (d - sw) / 2f;
                     box.set(cx - r, cy - r, cx + r, cy + r);
@@ -182,6 +203,39 @@ public class MainHook implements IXposedHookLoadPackage {
         });
     }
 
+
+    /** Moves the percent text in front of the icon (MiuiBatteryMeterView is a horizontal LinearLayout). */
+    private void hookMeter(ClassLoader cl) {
+        Class<?> meter = XposedHelpers.findClass(METER_VIEW, cl);
+        XposedHelpers.findAndHookMethod(meter, "onFinishInflate", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) {
+                try {
+                    loadPrefs();
+                    if (percentLeft) movePercentLeft((ViewGroup) p.thisObject);
+                } catch (Throwable t) {
+                    XposedBridge.log("RoundBattery: percent left failed: " + t);
+                }
+            }
+        });
+    }
+
+    private static void movePercentLeft(ViewGroup meter) {
+        Object o = XposedHelpers.getObjectField(meter, "mBatteryPercentContainer");
+        if (!(o instanceof View)) return;
+        View pc = (View) o;
+        if (pc.getParent() != meter) {
+            XposedBridge.log("RoundBattery: percent container is not a direct child, left as is");
+            return;
+        }
+        if (XposedHelpers.getAdditionalInstanceField(pc, "ll_left") != null) return;
+        meter.removeView(pc);
+        meter.addView(pc, 0);
+        // The stock gap to the icon is the start padding of the percent container: move it to the end side.
+        int start = pc.getPaddingStart();
+        pc.setPaddingRelative(0, pc.getPaddingTop(), start, pc.getPaddingBottom());
+        XposedHelpers.setAdditionalInstanceField(pc, "ll_left", Boolean.TRUE);
+    }
 
     /** Same state -> color order as the stock icon: charging, power save, performance, low, tint. */
     private static int pickColor(View v, boolean hollow) {

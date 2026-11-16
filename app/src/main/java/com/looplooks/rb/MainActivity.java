@@ -25,6 +25,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -54,6 +55,8 @@ public class MainActivity extends Activity {
     private final List<Object[]> switches = new ArrayList<>();  // {M3Switch, defaultChecked}
     private LinearLayout hdContent;
     private OrbitView orbit;
+    private View scrim;
+    private IconSegment iconSeg;
 
     private int col(int id) { return getColor(id); }
     private int dp(float v) { return Math.round(v * dens); }
@@ -141,38 +144,75 @@ public class MainActivity extends Activity {
         frame.addView(page, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // Fixed top: banner header (orbit rings bleed to the screen edges)
-        page.addView(buildHeader(), new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        // Scrolling settings
+        // Everything scrolls, banner header included, so nothing gets cut by a hard edge.
+        // The rings behind drift up at half the scroll speed.
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setVerticalScrollBarEnabled(false);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(14), dp(4), dp(14), dp(24));
+        root.setPadding(dp(14), 0, dp(14), dp(24));
         scroll.addView(root);
         page.addView(scroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        scroll.setOnScrollChangeListener((v, x, y, ox, oy) -> orbit.setTranslationY(-y * 0.5f));
 
-        groupLabel(root, "Ring");
+        // The header is full width: cancel the page padding with negative side margins.
+        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        hlp.setMargins(-dp(14), 0, -dp(14), 0);
+        root.addView(buildHeader(), hlp);
+
+        // Soft fade under the status bar: content slides out of sight instead of being cut.
+        scrim = new View(this);
+        scrim.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{col(R.color.bg), col(R.color.bg), col(R.color.bg) & 0x00FFFFFF}));
+        frame.addView(scrim, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(60), Gravity.TOP));
+
+        int iconStyle = sp.getInt(Cfg.K_ICON, Cfg.D_ICON);
+
+        groupLabel(root, "Icon");
+        LinearLayout segCard = card();
+        iconSeg = new IconSegment(this, iconStyle);
+        LinearLayout.LayoutParams sglp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        sglp.setMargins(dp(10), dp(10), dp(10), dp(10));
+        segCard.addView(iconSeg, sglp);
+        root.addView(segCard);
+
+        // Ring settings only apply to the ring icon, so they dim out when Default is picked.
+        final DimGroup ringWrap = new DimGroup(this);
+        groupLabel(ringWrap, "Ring");
         LinearLayout ringCard = card();
         sliderRow(ringCard, "Size", Cfg.K_SIZE, Cfg.D_SIZE, 60, 260, true, false);
         sliderRow(ringCard, "Thickness", Cfg.K_STROKE, Cfg.D_STROKE, 10, 80, true, true);
         sliderRow(ringCard, "Gap", Cfg.K_GAP, Cfg.D_GAP, 0, 100, true, true);
         sliderRow(ringCard, "Track opacity", Cfg.K_TRACK, Cfg.D_TRACK, 0, 100, false, true);
-        root.addView(ringCard);
+        ringWrap.addView(ringCard);
+        root.addView(ringWrap, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         groupLabel(root, "Options");
         LinearLayout optCard = card();
-        optionRow(optCard, R.drawable.ic_opt_round, "Round line ends", null,
-                sp.getBoolean(Cfg.K_ROUND, Cfg.D_ROUND), Cfg.D_ROUND, false,
+        optionRow(optCard, R.drawable.ic_opt_swap, "Percent on the left", null,
+                sp.getBoolean(Cfg.K_PCT_LEFT, Cfg.D_PCT_LEFT), Cfg.D_PCT_LEFT, false,
+                on -> sp.edit().putBoolean(Cfg.K_PCT_LEFT, on).apply());
+        final LinearLayout roundRow = optionRow(optCard, R.drawable.ic_opt_round, "Round line ends", null,
+                sp.getBoolean(Cfg.K_ROUND, Cfg.D_ROUND), Cfg.D_ROUND, true,
                 on -> sp.edit().putBoolean(Cfg.K_ROUND, on).apply());
         optionRow(optCard, R.drawable.ic_opt_lock, "Rotation lock icon", null,
                 sp.getBoolean(Cfg.K_ROTATE, Cfg.D_ROTATE), Cfg.D_ROTATE, true,
                 on -> sp.edit().putBoolean(Cfg.K_ROTATE, on).apply());
         root.addView(optCard);
+
+        ringWrap.setDim(iconStyle == 1, false);
+        dimRow(roundRow, iconStyle == 1, false);
+        iconSeg.listener = i -> {
+            sp.edit().putInt(Cfg.K_ICON, i).apply();
+            ringWrap.setDim(i == 1, true);
+            dimRow(roundRow, i == 1, true);
+        };
 
         TextView apply = text("Apply and restart System UI", 15, col(R.color.on_accent));
         apply.setTypeface(Typeface.DEFAULT_BOLD);
@@ -205,7 +245,10 @@ public class MainActivity extends Activity {
             @SuppressWarnings("deprecation") int bot = ins.getSystemWindowInsetBottom();
             hdContent.setPadding(dp(22), top + dp(38), dp(22), dp(16));
             orbit.setCenterY(top + dp(20) + dp(57));
-            root.setPadding(dp(14), dp(4), dp(14), dp(24) + bot);
+            root.setPadding(dp(14), 0, dp(14), dp(24) + bot);
+            ViewGroup.LayoutParams slp = scrim.getLayoutParams();
+            slp.height = top + dp(28);
+            scrim.setLayoutParams(slp);
             return ins;
         });
         setContentView(frame);
@@ -306,8 +349,16 @@ public class MainActivity extends Activity {
     }
 
     private interface OnToggle { void on(boolean checked); }
+    private interface OnPick { void pick(int index); }
 
-    private void optionRow(LinearLayout card, int iconRes, String title, String sub,
+    private static int blend(int base, int over, float a) {
+        return Color.rgb(
+                Math.round(Color.red(base) * (1f - a) + Color.red(over) * a),
+                Math.round(Color.green(base) * (1f - a) + Color.green(over) * a),
+                Math.round(Color.blue(base) * (1f - a) + Color.blue(over) * a));
+    }
+
+    private LinearLayout optionRow(LinearLayout card, int iconRes, String title, String sub,
                            boolean checked, boolean def, boolean dividerAbove, OnToggle l) {
         if (dividerAbove) divider(card);
         LinearLayout row = new LinearLayout(this);
@@ -338,6 +389,15 @@ public class MainActivity extends Activity {
         row.setOnClickListener(v -> sw.performClick());
         card.addView(row);
         switches.add(new Object[]{sw, def});
+        return row;
+    }
+
+    /** Greys a row out and makes it untouchable (its switch is always the last child). */
+    private void dimRow(LinearLayout row, boolean dim, boolean animate) {
+        row.setClickable(!dim);
+        row.getChildAt(row.getChildCount() - 1).setClickable(!dim);
+        float a = dim ? 0.35f : 1f;
+        if (animate) row.animate().alpha(a).setDuration(200).start(); else row.setAlpha(a);
     }
 
     private void resetAll() {
@@ -347,6 +407,7 @@ public class MainActivity extends Activity {
             sb.setProgress(def - min);
             ((TextView) s[1]).setText(fmt(def, (Boolean) s[5]));
         }
+        iconSeg.setIndex(Cfg.D_ICON, true);
         // Switches write their own prefs through the listener.
         for (Object[] s : switches) ((M3Switch) s[0]).setChecked((Boolean) s[1], true);
     }
@@ -357,6 +418,121 @@ public class MainActivity extends Activity {
             pr.waitFor();
         } catch (Exception e) {
             Toast.makeText(this, "Root failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** Vertical group that can be greyed out and blocks touches while dimmed. */
+    private class DimGroup extends LinearLayout {
+        private boolean blocked;
+
+        DimGroup(Context c) {
+            super(c);
+            setOrientation(VERTICAL);
+        }
+
+        void setDim(boolean dim, boolean animate) {
+            blocked = dim;
+            float a = dim ? 0.35f : 1f;
+            if (animate) animate().alpha(a).setDuration(200).start(); else setAlpha(a);
+        }
+
+        @Override
+        public boolean onInterceptTouchEvent(MotionEvent e) {
+            return blocked || super.onInterceptTouchEvent(e);
+        }
+    }
+
+    /**
+     * Ring / Default selector. One indicator slides between the two segments (no per-segment
+     * background that could cross-fade and merge when switching fast).
+     */
+    private class IconSegment extends View {
+        private final String[] labels = {"Ring", "Default"};
+        private final float[] iconW = {16f, 22.6f};
+        private final float[] iconH = {16f, 12.2f};
+        private final Drawable[] icons = new Drawable[2];
+        private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF r = new RectF();
+        private final ArgbEvaluator ev = new ArgbEvaluator();
+        private int index;
+        private float t;                 // 0 = Ring selected, 1 = Default selected
+        private ValueAnimator anim;
+        private OnPick listener;
+
+        IconSegment(Context c, int idx) {
+            super(c);
+            index = idx;
+            t = idx;
+            icons[0] = c.getDrawable(R.drawable.ic_seg_ring).mutate();
+            icons[1] = c.getDrawable(R.drawable.ic_seg_battery).mutate();
+            p.setTextSize(spx(14));
+            p.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+            setClickable(true);
+            setFocusable(true);
+            setContentDescription("Icon style: " + labels[idx]);
+        }
+
+        void setIndex(int i, boolean notify) {
+            if (i == index) return;
+            index = i;
+            setContentDescription("Icon style: " + labels[i]);
+            if (anim != null) anim.cancel();
+            anim = ValueAnimator.ofFloat(t, i);
+            anim.setDuration(240);
+            anim.setInterpolator(new PathInterpolator(0.2f, 0f, 0f, 1f));
+            anim.addUpdateListener(a -> { t = (Float) a.getAnimatedValue(); invalidate(); });
+            anim.start();
+            if (notify && listener != null) listener.pick(i);
+        }
+
+        @Override
+        protected void onMeasure(int w, int h) {
+            setMeasuredDimension(MeasureSpec.getSize(w), dp(48));
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent e) {
+            if (e.getAction() == MotionEvent.ACTION_DOWN) return true;
+            if (e.getAction() == MotionEvent.ACTION_UP) {
+                setIndex(e.getX() < getWidth() / 2f ? 0 : 1, true);
+                performClick();
+                return true;
+            }
+            return super.onTouchEvent(e);
+        }
+
+        @Override
+        public boolean performClick() { return super.performClick(); }
+
+        @Override
+        protected void onDraw(Canvas c) {
+            float w = getWidth(), h = getHeight(), pad = dp(4), gap = dp(4);
+            p.setStyle(Paint.Style.FILL);
+            p.setColor(col(R.color.bg));
+            r.set(0, 0, w, h);
+            c.drawRoundRect(r, dp(16), dp(16), p);
+
+            float segW = (w - 2 * pad - gap) / 2f;
+            float left = pad + t * (segW + gap);
+            p.setColor(blend(col(R.color.bg), col(R.color.accent), 0.28f));
+            r.set(left, pad, left + segW, h - pad);
+            c.drawRoundRect(r, dp(12), dp(12), p);
+
+            float cy = h / 2f;
+            Paint.FontMetrics fm = p.getFontMetrics();
+            for (int i = 0; i < 2; i++) {
+                float sel = Math.max(0f, Math.min(1f, i == 0 ? 1f - t : t));
+                int color = (Integer) ev.evaluate(sel, col(R.color.text_secondary), col(R.color.accent));
+                float iw = dp(iconW[i]), ih = dp(iconH[i]);
+                float total = iw + dp(8) + p.measureText(labels[i]);
+                float x0 = pad + i * (segW + gap) + (segW - total) / 2f;
+                icons[i].setTint(color);
+                icons[i].setBounds(Math.round(x0), Math.round(cy - ih / 2f),
+                        Math.round(x0 + iw), Math.round(cy + ih / 2f));
+                icons[i].draw(c);
+                p.setColor(color);
+                c.drawText(labels[i], x0 + iw + dp(8), cy - (fm.ascent + fm.descent) / 2f, p);
+            }
         }
     }
 
@@ -508,7 +684,7 @@ public class MainActivity extends Activity {
             // dashed outer orbit
             p.setColor(col(R.color.divider));
             p.setPathEffect(new DashPathEffect(new float[]{dp(2), dp(8)}, 0));
-            c.drawCircle(cx, cy, dp(96), p);
+            c.drawCircle(cx, cy, dp(106), p);
             p.setPathEffect(null);
             // inner faint ring
             p.setColor(col(R.color.card));
@@ -527,13 +703,13 @@ public class MainActivity extends Activity {
             c.drawCircle((float) (cx + r * Math.cos(a)), (float) (cy + r * Math.sin(a)), dp(7), p);
             // status satellite on the outer orbit: green + pulsing + slowly orbiting when active
             double sa = Math.toRadians(satAngle);
-            float sx = (float) (cx + dp(96) * Math.cos(sa));
-            float sy = (float) (cy + dp(96) * Math.sin(sa));
+            float sx = (float) (cx + dp(106) * Math.cos(sa));
+            float sy = (float) (cy + dp(106) * Math.sin(sa));
             int sc = col(active ? R.color.success : R.color.danger);
             if (active) {
                 p.setColor(sc);
                 p.setAlpha((int) (0.5f * 255f * (1f - ping)));
-                c.drawCircle(sx, sy, dp(4) + dp(9) * ping, p);
+                c.drawCircle(sx, sy, dp(4) + dp(7) * ping, p);
             }
             p.setColor(sc);
             c.drawCircle(sx, sy, dp(4), p);
