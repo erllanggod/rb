@@ -204,37 +204,39 @@ public class MainHook implements IXposedHookLoadPackage {
     }
 
 
-    /** Moves the percent text in front of the icon (MiuiBatteryMeterView is a horizontal LinearLayout). */
+    /**
+     * Percent text in front of the icon. MiuiBatteryMeterView is a LinearLayout, but it overrides
+     * onLayout and places icon, charging bolt and percent container by hand in a fixed order, so
+     * changing the child order does nothing. Instead, after its own layout, re-place the three
+     * views as: percent, charging bolt, icon (LTR only).
+     */
     private void hookMeter(ClassLoader cl) {
         Class<?> meter = XposedHelpers.findClass(METER_VIEW, cl);
-        XposedHelpers.findAndHookMethod(meter, "onFinishInflate", new XC_MethodHook() {
+        XposedHelpers.findAndHookMethod(meter, "onLayout",
+                boolean.class, int.class, int.class, int.class, int.class, new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam p) {
                 try {
-                    loadPrefs();
-                    if (percentLeft) movePercentLeft((ViewGroup) p.thisObject);
+                    if (!percentLeft) return;
+                    ViewGroup m = (ViewGroup) p.thisObject;
+                    if (m.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL) return;
+                    Object pc = XposedHelpers.getObjectField(m, "mBatteryPercentContainer");
+                    Object ch = XposedHelpers.getObjectField(m, "mBatteryChargingView");
+                    Object dg = XposedHelpers.getObjectField(m, "mBatteryDigitalView");
+                    int x = m.getPaddingStart();
+                    for (Object o : new Object[]{pc, ch, dg}) {
+                        if (!(o instanceof View)) continue;
+                        View v = (View) o;
+                        if (v.getVisibility() == View.GONE) continue;
+                        int w = v.getMeasuredWidth();
+                        v.layout(x, v.getTop(), x + w, v.getBottom());
+                        x += w;
+                    }
                 } catch (Throwable t) {
-                    XposedBridge.log("RoundBattery: percent left failed: " + t);
+                    XposedBridge.log("RoundBattery: percent left layout failed: " + t);
                 }
             }
         });
-    }
-
-    private static void movePercentLeft(ViewGroup meter) {
-        Object o = XposedHelpers.getObjectField(meter, "mBatteryPercentContainer");
-        if (!(o instanceof View)) return;
-        View pc = (View) o;
-        if (pc.getParent() != meter) {
-            XposedBridge.log("RoundBattery: percent container is not a direct child, left as is");
-            return;
-        }
-        if (XposedHelpers.getAdditionalInstanceField(pc, "ll_left") != null) return;
-        meter.removeView(pc);
-        meter.addView(pc, 0);
-        // The stock gap to the icon is the start padding of the percent container: move it to the end side.
-        int start = pc.getPaddingStart();
-        pc.setPaddingRelative(0, pc.getPaddingTop(), start, pc.getPaddingBottom());
-        XposedHelpers.setAdditionalInstanceField(pc, "ll_left", Boolean.TRUE);
     }
 
     /** Same state -> color order as the stock icon: charging, power save, performance, low, tint. */
