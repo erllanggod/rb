@@ -204,6 +204,9 @@ public class MainActivity extends Activity {
         optionRow(optCard, R.drawable.ic_opt_lock, "Rotation lock icon", null,
                 sp.getBoolean(Cfg.K_ROTATE, Cfg.D_ROTATE), Cfg.D_ROTATE, true,
                 on -> sp.edit().putBoolean(Cfg.K_ROTATE, on).apply());
+        optionRow(optCard, R.drawable.ic_opt_notif, "Monochrome notification icons", null,
+                sp.getBoolean(Cfg.K_MONO, Cfg.D_MONO), Cfg.D_MONO, true,
+                on -> sp.edit().putBoolean(Cfg.K_MONO, on).apply());
         root.addView(optCard);
 
         ringWrap.setDim(iconStyle == 1, false);

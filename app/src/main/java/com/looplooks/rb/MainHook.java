@@ -1,5 +1,6 @@
 package com.looplooks.rb;
 
+import android.app.Notification;
 import android.content.Context;
 import android.database.ContentObserver;
 import android.graphics.Canvas;
@@ -12,6 +13,7 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.RemoteViews;
 import android.widget.TextView;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -43,6 +45,7 @@ public class MainHook implements IXposedHookLoadPackage {
     private static boolean roundEnds = Cfg.D_ROUND;
     private static int iconStyle = Cfg.D_ICON;           // 0 = ring, 1 = stock icon
     private static boolean percentLeft = Cfg.D_PCT_LEFT;
+    private static boolean monoNotif = Cfg.D_MONO;
     private static boolean warned = false;
 
     private static void loadPrefs() {
@@ -68,6 +71,7 @@ public class MainHook implements IXposedHookLoadPackage {
             roundEnds = prefs.getBoolean(Cfg.K_ROUND, Cfg.D_ROUND);
             iconStyle = prefs.getInt(Cfg.K_ICON, Cfg.D_ICON);
             percentLeft = prefs.getBoolean(Cfg.K_PCT_LEFT, Cfg.D_PCT_LEFT);
+            monoNotif = prefs.getBoolean(Cfg.K_MONO, Cfg.D_MONO);
         } catch (Throwable t) {
             XposedBridge.log("RoundBattery: loadPrefs failed: " + t);
         }
@@ -100,6 +104,11 @@ public class MainHook implements IXposedHookLoadPackage {
             hookMeter(lpparam.classLoader);
         } catch (Throwable t) {
             XposedBridge.log("RoundBattery: meter view hook failed: " + t);
+        }
+        try {
+            hookMonoNotif(lpparam.classLoader);
+        } catch (Throwable t) {
+            XposedBridge.log("RoundBattery: monochrome notification hook failed: " + t);
         }
         try {
             hookDateView(lpparam.classLoader);
@@ -203,6 +212,108 @@ public class MainHook implements IXposedHookLoadPackage {
         });
     }
 
+
+    // ---- Monochrome status bar notification icons ("Android" notification style) ----
+    // On CN-based builds SystemUI ignores that style: the icon code only takes the small-icon path when
+    // MiuiConfigs.IS_INTERNATIONAL_BUILD is true (or MIUI optimization is off). The ROM fix forces those
+    // two values inside four methods. Here the same values are applied only while those methods run.
+    private static final String NOTIF_UTIL = "com.android.systemui.statusbar.notification.utils.NotifImageUtil";
+    private static final String NOTIF_WRAPPER = "com.android.systemui.statusbar.notification.row.wrapper.NotificationViewWrapper";
+    private static final String NOTIF_BINDER = "com.android.systemui.statusbar.notification.row.NotificationRowContentBinderInjectorImpl";
+    private static final String NOTIF_ROW = "com.android.systemui.statusbar.notification.row.ExpandableNotificationRow";
+    private static final String NOTIF_EXPANDED = "com.android.systemui.statusbar.notification.ExpandedNotification";
+    private static final String MIUI_CONFIGS = "com.miui.utils.configs.MiuiConfigs";
+
+    // Nested or concurrent calls: remember the real value only when the first one enters, put it back when the last leaves.
+    private static final Object INTL_LOCK = new Object();
+    private static int intlDepth;
+    private static boolean intlSaved;
+    private static final Object OPT_LOCK = new Object();
+    private static int optDepth;
+    private static boolean optSaved;
+
+    private void hookMonoNotif(ClassLoader cl) {
+        final Class<?> cfg = XposedHelpers.findClass(MIUI_CONFIGS, cl);
+
+        XC_MethodHook forceInternational = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) {
+                if (!monoNotif) return;
+                try {
+                    synchronized (INTL_LOCK) {
+                        if (intlDepth == 0) {
+                            intlSaved = XposedHelpers.getStaticBooleanField(cfg, "IS_INTERNATIONAL_BUILD");
+                            XposedHelpers.setStaticBooleanField(cfg, "IS_INTERNATIONAL_BUILD", true);
+                        }
+                        intlDepth++;
+                    }
+                    p.setObjectExtra("ll_intl", Boolean.TRUE);
+                } catch (Throwable t) {
+                    XposedBridge.log("RoundBattery: force international failed: " + t);
+                }
+            }
+
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) {
+                if (p.getObjectExtra("ll_intl") == null) return;
+                try {
+                    synchronized (INTL_LOCK) {
+                        if (--intlDepth == 0) {
+                            XposedHelpers.setStaticBooleanField(cfg, "IS_INTERNATIONAL_BUILD", intlSaved);
+                        }
+                    }
+                } catch (Throwable t) {
+                    XposedBridge.log("RoundBattery: restore international failed: " + t);
+                }
+            }
+        };
+
+        // Status bar icon: small (monochrome) icon instead of the app icon
+        XposedHelpers.findAndHookMethod(NOTIF_UTIL, cl, "getSmallIcon", Context.class,
+                android.service.notification.StatusBarNotification.class, int.class, boolean.class,
+                forceInternational);
+        XposedHelpers.findAndHookMethod(NOTIF_UTIL, cl, "shouldSubstituteSmallIcon",
+                NOTIF_EXPANDED, forceInternational);
+        XposedHelpers.findAndHookConstructor(NOTIF_WRAPPER, cl, Context.class, View.class,
+                NOTIF_ROW, forceInternational);
+
+        // Notification row: skip the app icon handling that only runs with MIUI optimization on
+        XposedHelpers.findAndHookMethod(NOTIF_BINDER, cl, "handleAppIcon", RemoteViews.class,
+                Notification.class, Context.class, boolean.class, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) {
+                if (!monoNotif) return;
+                try {
+                    Object sm = XposedHelpers.getObjectField(p.thisObject, "settingsManager");
+                    synchronized (OPT_LOCK) {
+                        if (optDepth == 0) {
+                            optSaved = XposedHelpers.getBooleanField(sm, "miuiOptimizationEnabled");
+                            XposedHelpers.setBooleanField(sm, "miuiOptimizationEnabled", false);
+                        }
+                        optDepth++;
+                    }
+                    p.setObjectExtra("ll_sm", sm);
+                } catch (Throwable t) {
+                    XposedBridge.log("RoundBattery: force optimization off failed: " + t);
+                }
+            }
+
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) {
+                Object sm = p.getObjectExtra("ll_sm");
+                if (sm == null) return;
+                try {
+                    synchronized (OPT_LOCK) {
+                        if (--optDepth == 0) {
+                            XposedHelpers.setBooleanField(sm, "miuiOptimizationEnabled", optSaved);
+                        }
+                    }
+                } catch (Throwable t) {
+                    XposedBridge.log("RoundBattery: restore optimization failed: " + t);
+                }
+            }
+        });
+    }
 
     /**
      * Percent text in front of the icon. MiuiBatteryMeterView is a LinearLayout, but it overrides
